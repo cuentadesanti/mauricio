@@ -1,16 +1,17 @@
 from datetime import datetime
 from uuid import uuid4
-
 from sqlalchemy import (
     BigInteger,
-    DateTime,
     ForeignKey,
     Index,
     String,
+    DateTime,
+    Text,
     func,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from pgvector.sqlalchemy import Vector
 
 
 class Base(DeclarativeBase):
@@ -78,3 +79,61 @@ class Event(Base):
     received_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+
+class ChatSummary(Base):
+    __tablename__ = "chat_summaries"
+    chat_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("chats.id", ondelete="CASCADE"), primary_key=True
+    )
+    summary: Mapped[str] = mapped_column(Text)
+    up_to_message_id: Mapped[str | None] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("messages.id")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class MemoryRow(Base):
+    __tablename__ = "memories"
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid4()))
+    user_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("users.id"))
+    kind: Mapped[str] = mapped_column(String)
+    content: Mapped[str] = mapped_column(Text)
+    metadata_json: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
+    source_chat_id: Mapped[str | None] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("chats.id"), nullable=True
+    )
+    source_message_id: Mapped[str | None] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("messages.id"), nullable=True
+    )
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(1536), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class KnowledgeDoc(Base):
+    __tablename__ = "knowledge_docs"
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid4()))
+    user_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("users.id"))
+    s3_key: Mapped[str] = mapped_column(String)
+    title: Mapped[str | None] = mapped_column(String, nullable=True)
+    content_hash: Mapped[str] = mapped_column(String)
+    metadata_json: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class KnowledgeChunk(Base):
+    __tablename__ = "knowledge_chunks"
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid4()))
+    doc_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("knowledge_docs.id", ondelete="CASCADE")
+    )
+    chunk_index: Mapped[int] = mapped_column()
+    content: Mapped[str] = mapped_column(Text)
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(1536), nullable=True)

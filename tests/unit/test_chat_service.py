@@ -22,9 +22,20 @@ def _mock_repo():
     repo.log_event.return_value = None
     repo.create_chat.return_value = MagicMock(id="chat-1", signature=None)
     repo.find_chat_by_signature.return_value = None
-    repo.add_message.return_value = MagicMock()
+    repo.add_message.return_value = MagicMock(id="msg-1")
     repo.update_chat_signature.return_value = None
+    repo.get_summary.return_value = None
     return repo
+
+
+def _patch_service(service: ChatService) -> ChatService:
+    """Replace Phase-2 sub-services with no-op mocks so tests stay unit-level."""
+    service.memory = AsyncMock()
+    service.memory.retrieve_relevant.return_value = []
+    service.knowledge = AsyncMock()
+    service.knowledge.search.return_value = []
+    service._post_turn_jobs = AsyncMock()
+    return service
 
 
 async def _run(service, mode, messages, session=None):
@@ -46,7 +57,7 @@ async def test_memoryless_streams_sse_chunks():
 
     with patch("backend.services.chat_service.Repository") as MockRepo:
         MockRepo.return_value = _mock_repo()
-        service = ChatService(gateway=gateway)
+        service = _patch_service(ChatService(gateway=gateway))
         chunks = await _run(service, ChatMode.MEMORYLESS, [{"role": "user", "content": "hi"}])
 
     full = "".join(chunks)
@@ -62,7 +73,7 @@ async def test_memoryless_does_not_persist_chat():
     mock_repo = _mock_repo()
     with patch("backend.services.chat_service.Repository") as MockRepo:
         MockRepo.return_value = mock_repo
-        service = ChatService(gateway=gateway)
+        service = _patch_service(ChatService(gateway=gateway))
         await _run(service, ChatMode.MEMORYLESS, [{"role": "user", "content": "hi"}])
 
     mock_repo.create_chat.assert_not_called()
@@ -74,14 +85,11 @@ async def test_persistent_creates_chat_on_first_message():
     gateway.complete.return_value = _resp("respuesta")
 
     mock_repo = _mock_repo()
-    with patch("backend.services.chat_service.Repository") as MockRepo:
+    with patch("backend.services.chat_service.Repository") as MockRepo, \
+         patch("backend.services.chat_service.asyncio.create_task"):
         MockRepo.return_value = mock_repo
-        service = ChatService(gateway=gateway)
-        await _run(
-            service,
-            ChatMode.PERSISTENT,
-            [{"role": "user", "content": "hola"}],
-        )
+        service = _patch_service(ChatService(gateway=gateway))
+        await _run(service, ChatMode.PERSISTENT, [{"role": "user", "content": "hola"}])
 
     mock_repo.create_chat.assert_called_once()
     mock_repo.add_message.assert_called()
@@ -95,9 +103,10 @@ async def test_persistent_reuses_existing_chat():
     mock_repo = _mock_repo()
     mock_repo.find_chat_by_signature.return_value = existing_chat
 
-    with patch("backend.services.chat_service.Repository") as MockRepo:
+    with patch("backend.services.chat_service.Repository") as MockRepo, \
+         patch("backend.services.chat_service.asyncio.create_task"):
         MockRepo.return_value = mock_repo
-        service = ChatService(gateway=gateway)
+        service = _patch_service(ChatService(gateway=gateway))
         await _run(
             service,
             ChatMode.PERSISTENT,
@@ -125,18 +134,17 @@ async def test_tool_call_is_executed_and_result_forwarded():
 
     with patch("backend.services.chat_service.Repository") as MockRepo:
         MockRepo.return_value = _mock_repo()
-        service = ChatService(gateway=gateway)
+        service = _patch_service(ChatService(gateway=gateway))
         chunks = await _run(
             service, ChatMode.MEMORYLESS, [{"role": "user", "content": "¿qué hora es?"}]
         )
 
     assert gateway.complete.call_count == 2
-    # Second call must include tool result message
     second_call_msgs = gateway.complete.call_args_list[1][0][0].messages
     tool_msgs = [m for m in second_call_msgs if m["role"] == "tool"]
     assert len(tool_msgs) == 1
     payload = json.loads(tool_msgs[0]["content"])
-    assert "iso" in payload  # time_now returns iso field
+    assert "iso" in payload
 
     full = "".join(chunks)
     assert "12:00" in full
@@ -156,7 +164,7 @@ async def test_unknown_tool_returns_error_message():
 
     with patch("backend.services.chat_service.Repository") as MockRepo:
         MockRepo.return_value = _mock_repo()
-        service = ChatService(gateway=gateway)
+        service = _patch_service(ChatService(gateway=gateway))
         await _run(service, ChatMode.MEMORYLESS, [{"role": "user", "content": "usa X"}])
 
     second_call_msgs = gateway.complete.call_args_list[1][0][0].messages
@@ -172,12 +180,11 @@ async def test_max_tool_loops_halts_and_returns_sentinel():
         "function": {"name": "time_now", "arguments": "{}"},
     }
     gateway = AsyncMock()
-    # Every call returns another tool call → triggers loop limit
     gateway.complete.return_value = _resp("", tool_calls=[tool_call])
 
     with patch("backend.services.chat_service.Repository") as MockRepo:
         MockRepo.return_value = _mock_repo()
-        service = ChatService(gateway=gateway)
+        service = _patch_service(ChatService(gateway=gateway))
         chunks = await _run(service, ChatMode.MEMORYLESS, [{"role": "user", "content": "loop"}])
 
     assert gateway.complete.call_count == MAX_TOOL_LOOPS

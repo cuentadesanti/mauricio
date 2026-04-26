@@ -1,31 +1,37 @@
 import asyncio
 import json
-import logging
 import time
 import uuid
-from collections.abc import AsyncIterator
+from typing import AsyncIterator
 
 from langfuse.decorators import observe
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.repository import Repository, hash_messages
+from ..db.session import SessionLocal
 from ..domain.chat import ChatMode
 from ..domain.model_gateway import CompletionRequest
+from ..gateways.embeddings_gateway import EmbeddingsGateway
 from ..gateways.litellm_gateway import LiteLLMGateway
-from ..tools.note_list import NoteListTool
 from ..tools.registry import REGISTRY, openai_tool_specs
+from .knowledge_service import KnowledgeService
+from .memory_extractor import MemoryExtractor
+from .memory_service import MemoryService
 from .router import pick_model
-
-logger = logging.getLogger(__name__)
+from .summarizer import Summarizer
 
 MAX_TOOL_LOOPS = 5
 RECENT_MESSAGES_WINDOW = 30  # cuántos cargamos al continuar un chat
-_note_lister = NoteListTool()
 
 
 class ChatService:
     def __init__(self, gateway: LiteLLMGateway):
         self.gw = gateway
+        self.emb = EmbeddingsGateway()
+        self.knowledge = KnowledgeService(self.emb)
+        self.memory = MemoryService(self.emb)
+        self.extractor = MemoryExtractor(self.gw, self.memory)
+        self.summarizer = Summarizer(self.gw)
         self._last_text = ""
         self._last_model = ""
         self._last_usage = {}
@@ -53,7 +59,7 @@ class ChatService:
             await session.commit()
             return
 
-        # ---- PERSISTENT ----
+        # ---- PERSISTENT con retrieval híbrido ----
         # firma del prefix para reconciliar el chat
         prior = incoming_messages[:-1]
         signature_in = hash_messages(prior) if prior else ""
@@ -77,19 +83,36 @@ class ChatService:
                 content={"text": new_user_msg.get("content", "")},
             )
 
-        # construimos el contexto que mandamos al LLM
-        context = incoming_messages[-RECENT_MESSAGES_WINDOW:]
+        # ---- construir contexto enriquecido ----
+        last_user_text = self._extract_text(incoming_messages[-1])
+
+        # disparar las 3 búsquedas en paralelo
+        memories_task = self.memory.retrieve_relevant(session, user.id, last_user_text, k=5)
+        chunks_task = self.knowledge.search(session, user.id, last_user_text, k=5)
+        summary_task = repo.get_summary(chat.id)
+
+        memories, chunks, summary = await asyncio.gather(
+            memories_task, chunks_task, summary_task
+        )
+
+        system_msg = self._build_system_prompt(memories, chunks, summary)
+
+        # mensajes raw que mandamos al LLM:
+        # si hay summary, solo los últimos 10 de la conversación
+        raw_msgs = (
+            incoming_messages[-10:] if summary else incoming_messages[-RECENT_MESSAGES_WINDOW:]
+        )
+        context = [{"role": "system", "content": system_msg}, *raw_msgs]
 
         async for chunk in self._run_loop(context, user_id=user.id, chat_id=chat.id):
             yield chunk
 
-        # actualizar firma del chat: ahora incluye user + assistant nuevos
+        # actualizar firma + persistir respuesta del assistant
         full_history = incoming_messages + [{"role": "assistant", "content": self._last_text}]
         new_signature = hash_messages(full_history)
         await repo.update_chat_signature(chat, new_signature)
 
-        # persistir respuesta del assistant
-        await repo.add_message(
+        assistant_row = await repo.add_message(
             chat.id,
             role="assistant",
             content={"text": self._last_text},
@@ -99,34 +122,26 @@ class ChatService:
         )
         await session.commit()
 
-    # --- loop interno con tools ---
+        # ---- jobs async (no bloquean al usuario, ya respondió) ----
+        asyncio.create_task(
+            self._post_turn_jobs(
+                user_id=user.id,
+                chat_id=chat.id,
+                user_text=last_user_text,
+                assistant_text=self._last_text,
+                assistant_msg_id=assistant_row.id,
+            )
+        )
 
-    async def _build_knowledge_system_msg(self) -> str | None:
-        """Genera un system message con el resumen de las notas guardadas."""
-        result = await _note_lister.run({}, {})
-        notes = result.get("notes", [])
-        if not notes:
-            return None
-        lines = ["## Notas personales del usuario\n"]
-        for n in notes:
-            tags = f" [{', '.join(n['tags'])}]" if n["tags"] else ""
-            snippet = n["snippet"].replace("\n", " ")
-            lines.append(f"- **{n['title']}**{tags}: {snippet}")
-        return "\n".join(lines)
+    # --- loop interno con tools ---
 
     @observe(name="tool_loop")
     async def _collect_response(
         self, messages: list[dict], *, user_id: str, chat_id: str | None
     ) -> None:
-        """Corre el loop LLM → tools hasta obtener respuesta final."""
+        """Corre el loop LLM → tools hasta obtener respuesta final. Guarda resultado en self._last_*."""
         ctx = {"user_id": user_id, "chat_id": chat_id}
         working = list(messages)
-
-        # Inyecta notas como system message si aún no hay uno
-        if not any(m.get("role") == "system" for m in working):
-            knowledge_msg = await self._build_knowledge_system_msg()
-            if knowledge_msg:
-                working = [{"role": "system", "content": knowledge_msg}] + working
 
         for _ in range(MAX_TOOL_LOOPS):
             req = CompletionRequest(
@@ -161,9 +176,7 @@ class ChatService:
                 else:
                     try:
                         result = await tool.run(args, ctx)
-                        logger.info("tool %s ok: %s", tool_name, result)
                     except Exception as e:
-                        logger.error("tool %s failed: %s", tool_name, e, exc_info=True)
                         result = {"error": str(e)}
                 working.append(
                     {
@@ -184,6 +197,63 @@ class ChatService:
         await self._collect_response(messages, user_id=user_id, chat_id=chat_id)
         async for sse in _fake_stream(self._last_text, self._last_model):
             yield sse
+
+    # ---- helpers nuevos ----
+
+    def _extract_text(self, msg: dict) -> str:
+        c = msg.get("content")
+        if isinstance(c, str):
+            return c
+        if isinstance(c, list):  # multimodal
+            return " ".join(p.get("text", "") for p in c if isinstance(p, dict))
+        return ""
+
+    def _build_system_prompt(self, memories, chunks, summary) -> str:
+        parts = ["You are a personal AI assistant. Be concise, accurate, and helpful."]
+
+        if memories:
+            mem_lines = "\n".join(f"- ({k}) {c}" for k, c, _ in memories)
+            parts.append(f"## What I know about the user\n{mem_lines}")
+
+        if chunks:
+            chunk_lines = []
+            for title, content, _, _score in chunks:
+                snippet = content[:600].strip()
+                chunk_lines.append(f"### From: {title}\n{snippet}")
+            parts.append(
+                "## Relevant excerpts from the user's knowledge base\n" + "\n\n".join(chunk_lines)
+            )
+
+        if summary:
+            parts.append(f"## Earlier conversation summary\n{summary.summary}")
+
+        return "\n\n".join(parts)
+
+    async def _post_turn_jobs(
+        self,
+        *,
+        user_id: str,
+        chat_id: str,
+        user_text: str,
+        assistant_text: str,
+        assistant_msg_id: str,
+    ):
+        """Corre extracción de memoria + summarization en background.
+        Cada job abre su propia session (la del request ya se cerró)."""
+        try:
+            async with SessionLocal() as s:
+                await self.extractor.extract_and_store(
+                    s,
+                    user_id=user_id,
+                    chat_id=chat_id,
+                    user_text=user_text,
+                    assistant_text=assistant_text,
+                    source_message_id=assistant_msg_id,
+                )
+            async with SessionLocal() as s:
+                await self.summarizer.maybe_summarize(s, chat_id=chat_id)
+        except Exception as e:
+            print(f"[post_turn_jobs] error: {e}")
 
 
 async def _fake_stream(text: str, model: str, chunk_size: int = 20):
