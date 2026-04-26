@@ -1,0 +1,15 @@
+# .gitignore
+.env
+.env.local
+.env.librechat
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.db
+*.log
+.DS_Store
+node_modules/
+*.egg-info/

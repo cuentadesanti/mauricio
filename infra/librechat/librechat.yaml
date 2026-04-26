@@ -1,0 +1,15 @@
+version: 1.2.4
+cache: true
+
+endpoints:
+  custom:
+    - name: "Personal AI"
+      apiKey: "${BACKEND_API_KEY}"
+      baseURL: "http://backend:8000/v1"
+      models:
+        default: ["personal-ai-default"]
+        fetch: false
+      titleConvo: true
+      titleModel: "personal-ai-default"
+      modelDisplayLabel: "Personal AI"
+      summarize: false

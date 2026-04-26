@@ -1,0 +1,73 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: ai
+      POSTGRES_PASSWORD: ai
+      POSTGRES_DB: personalai
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U ai" ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./infra/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mqtt_data:/mosquitto/data
+
+  backend:
+    build:
+      context: .
+      dockerfile: apps/backend/Dockerfile
+    env_file: .env
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # dev: monta el código para reload sin rebuild
+    volumes:
+      - ./apps/backend:/app/apps/backend
+    command: [ "uvicorn", "apps.backend.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload" ]
+
+  mongodb:
+    image: mongo:7
+    volumes:
+      - mongo_data:/data/db
+
+  meilisearch:
+    image: getmeili/meilisearch:v1.12
+    environment:
+      MEILI_MASTER_KEY: dev-master-key-change-me
+      MEILI_NO_ANALYTICS: "true"
+    volumes:
+      - meili_data:/meili_data
+
+  librechat:
+    image: ghcr.io/danny-avila/librechat:latest
+    env_file: .env.librechat
+    ports:
+      - "3080:3080"
+    volumes:
+      - ./infra/librechat/librechat.yaml:/app/librechat.yaml:ro
+    depends_on:
+      backend:
+        condition: service_started
+      mongodb:
+        condition: service_started
+      meilisearch:
+        condition: service_started
+
+volumes:
+  pg_data:
+  mqtt_data:
+  mongo_data:
+  meili_data:
