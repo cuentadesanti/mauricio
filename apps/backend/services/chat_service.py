@@ -11,11 +11,13 @@ from ..db.repository import Repository, hash_messages
 from ..domain.chat import ChatMode
 from ..domain.model_gateway import CompletionRequest
 from ..gateways.litellm_gateway import LiteLLMGateway
+from ..tools.note_list import NoteListTool
 from ..tools.registry import REGISTRY, openai_tool_specs
 from .router import pick_model
 
 MAX_TOOL_LOOPS = 5
 RECENT_MESSAGES_WINDOW = 30  # cuántos cargamos al continuar un chat
+_note_lister = NoteListTool()
 
 
 class ChatService:
@@ -96,13 +98,32 @@ class ChatService:
 
     # --- loop interno con tools ---
 
+    async def _build_knowledge_system_msg(self) -> str | None:
+        """Genera un system message con el resumen de las notas guardadas."""
+        result = await _note_lister.run({}, {})
+        notes = result.get("notes", [])
+        if not notes:
+            return None
+        lines = ["## Notas personales del usuario\n"]
+        for n in notes:
+            tags = f" [{', '.join(n['tags'])}]" if n["tags"] else ""
+            snippet = n["snippet"].replace("\n", " ")
+            lines.append(f"- **{n['title']}**{tags}: {snippet}")
+        return "\n".join(lines)
+
     @observe(name="tool_loop")
     async def _collect_response(
         self, messages: list[dict], *, user_id: str, chat_id: str | None
     ) -> None:
-        """Corre el loop LLM → tools hasta obtener respuesta final. Guarda resultado en self._last_*."""
+        """Corre el loop LLM → tools hasta obtener respuesta final."""
         ctx = {"user_id": user_id, "chat_id": chat_id}
         working = list(messages)
+
+        # Inyecta notas como system message si aún no hay uno
+        if not any(m.get("role") == "system" for m in working):
+            knowledge_msg = await self._build_knowledge_system_msg()
+            if knowledge_msg:
+                working = [{"role": "system", "content": knowledge_msg}] + working
 
         for _ in range(MAX_TOOL_LOOPS):
             req = CompletionRequest(

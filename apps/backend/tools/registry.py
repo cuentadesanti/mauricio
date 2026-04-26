@@ -1,6 +1,8 @@
 from ..core.config import settings
 from .base import Tool
 from .note_add import NoteAddTool
+from .note_list import NoteListTool
+from .note_read import NoteReadTool
 from .time_now import TimeNowTool
 from .web_search import WebSearchTool
 
@@ -8,6 +10,8 @@ from .web_search import WebSearchTool
 def build_registry() -> dict[str, Tool]:
     tools: dict[str, Tool] = {
         "time_now": TimeNowTool(),
+        "note_list": NoteListTool(),
+        "note_read": NoteReadTool(),
         "note_add": NoteAddTool(),
     }
     if settings.tavily_api_key:
