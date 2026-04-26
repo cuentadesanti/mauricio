@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -14,6 +15,8 @@ from ..gateways.litellm_gateway import LiteLLMGateway
 from ..tools.note_list import NoteListTool
 from ..tools.registry import REGISTRY, openai_tool_specs
 from .router import pick_model
+
+logger = logging.getLogger(__name__)
 
 MAX_TOOL_LOOPS = 5
 RECENT_MESSAGES_WINDOW = 30  # cuántos cargamos al continuar un chat
@@ -158,7 +161,9 @@ class ChatService:
                 else:
                     try:
                         result = await tool.run(args, ctx)
+                        logger.info("tool %s ok: %s", tool_name, result)
                     except Exception as e:
+                        logger.error("tool %s failed: %s", tool_name, e, exc_info=True)
                         result = {"error": str(e)}
                 working.append(
                     {

@@ -1,9 +1,25 @@
+import asyncio
+import logging
+
 from kasa import Credentials, Discover
 
 from ..core.config import settings
 from .base import ToolSpec
 
 LAMP_HOST = "192.168.1.26"
+logger = logging.getLogger(__name__)
+
+
+async def _connect(creds: Credentials, max_attempts: int = 3):
+    for attempt in range(max_attempts):
+        try:
+            return await Discover.discover_single(LAMP_HOST, credentials=creds)
+        except Exception as e:
+            if attempt == max_attempts - 1:
+                raise
+            wait = 0.5 * (attempt + 1)
+            logger.warning("lamp attempt %d failed: %s — retry in %.1fs", attempt + 1, e, wait)
+            await asyncio.sleep(wait)
 
 
 class LampTool:
@@ -30,7 +46,7 @@ class LampTool:
     async def run(self, args: dict, ctx: dict) -> dict:
         action = args["action"]
         creds = Credentials(username=settings.kasa_username, password=settings.kasa_password)
-        lamp = await Discover.discover_single(LAMP_HOST, credentials=creds)
+        lamp = await _connect(creds)
         try:
             await lamp.update()
             if action == "status":
