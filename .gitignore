@@ -1,7 +1,6 @@
 # .gitignore
 .env
 .env.local
-.env.librechat
 __pycache__/
 *.pyc
 .venv/
