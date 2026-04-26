@@ -36,7 +36,11 @@ services:
     # dev: monta el código para reload sin rebuild
     volumes:
       - ./apps/backend:/app/apps/backend
-    command: [ "uvicorn", "apps.backend.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload" ]
+      - ./infra:/app/infra
+      - ./knowledge:/app/knowledge
+    command: >
+      sh -c "alembic -c infra/alembic.ini upgrade head &&
+             uvicorn apps.backend.main:app --host 0.0.0.0 --port 8000 --reload"
 
   mongodb:
     image: mongo:7

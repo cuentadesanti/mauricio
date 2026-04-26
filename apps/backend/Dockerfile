@@ -4,6 +4,7 @@ WORKDIR /app
 
 COPY pyproject.toml ./
 COPY apps ./apps
+COPY infra ./infra
 
 RUN pip install --no-cache-dir uv && \
     uv pip install --system .

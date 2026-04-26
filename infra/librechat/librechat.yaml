@@ -7,9 +7,9 @@ endpoints:
       apiKey: "${BACKEND_API_KEY}"
       baseURL: "http://backend:8000/v1"
       models:
-        default: ["personal-ai-default"]
+        default: ["personal-ai", "personal-ai-quick"]
         fetch: false
       titleConvo: true
-      titleModel: "personal-ai-default"
+      titleModel: "personal-ai-quick"      # generamos el título con el barato
       modelDisplayLabel: "Personal AI"
       summarize: false

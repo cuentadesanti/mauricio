@@ -1,17 +1,24 @@
-import json
-import time
-import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.responses import StreamingResponse
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.config import settings
-from ..domain.model_gateway import CompletionRequest
+from ..db.session import get_session
+from ..domain.chat import ChatMode
 from ..gateways.litellm_gateway import LiteLLMGateway
+from ..services.chat_service import ChatService
 
 router = APIRouter()
-gateway = LiteLLMGateway()
+
+# Convención: dos "modelos" expuestos a LibreChat:
+#   personal-ai        → modo persistent
+#   personal-ai-quick  → modo memoryless
+MODEL_TO_MODE = {
+    "personal-ai": ChatMode.PERSISTENT,
+    "personal-ai-quick": ChatMode.MEMORYLESS,
+}
 
 
 def verify_api_key(authorization: Annotated[str | None, Header()] = None):
@@ -23,76 +30,33 @@ def verify_api_key(authorization: Annotated[str | None, Header()] = None):
 
 @router.get("/models")
 async def list_models(_: None = Depends(verify_api_key)):
-    """LibreChat consulta esto al arrancar."""
     return {
         "object": "list",
         "data": [
-            {"id": "personal-ai-default", "object": "model", "owned_by": "you"},
+            {"id": "personal-ai", "object": "model", "owned_by": "you"},
+            {"id": "personal-ai-quick", "object": "model", "owned_by": "you"},
         ],
     }
 
 
 @router.post("/chat/completions", dependencies=[Depends(verify_api_key)])
-async def chat_completions(body: dict):
-    req = CompletionRequest(
-        messages=body["messages"],
-        model_hint=body.get("model") if body.get("model") != "personal-ai-default" else None,
-        tools=body.get("tools"),
-        temperature=body.get("temperature", 0.7),
-        max_tokens=body.get("max_tokens"),
-        metadata={"source": "librechat"},
-    )
+async def chat_completions(
+    body: dict, session: AsyncSession = Depends(get_session)
+):  # noqa: B008
+    model_id = body.get("model", "personal-ai")
+    mode = MODEL_TO_MODE.get(model_id, ChatMode.PERSISTENT)
 
-    if body.get("stream"):
-        return StreamingResponse(_stream(req), media_type="text/event-stream")
+    service = ChatService(gateway=LiteLLMGateway())
 
-    resp = await gateway.complete(req)
-    return _format_response(resp)
+    # de momento siempre stream — LibreChat siempre lo pide
+    async def gen():
+        async for chunk in service.handle(
+            session,
+            user_handle=settings.default_user_handle,
+            channel="web",
+            mode=mode,
+            incoming_messages=body["messages"],
+        ):
+            yield chunk
 
-
-async def _stream(req: CompletionRequest):
-    completion_id = f"chatcmpl-{uuid.uuid4().hex}"
-    created = int(time.time())
-
-    async for chunk in gateway.stream(req):
-        # LiteLLM ya devuelve formato OpenAI, solo lo serializamos como SSE
-        delta = chunk.choices[0].delta
-        payload = {
-            "id": completion_id,
-            "object": "chat.completion.chunk",
-            "created": created,
-            "model": chunk.model,
-            "choices": [
-                {
-                    "index": 0,
-                    "delta": {
-                        "role": delta.role,
-                        "content": delta.content or "",
-                    },
-                    "finish_reason": chunk.choices[0].finish_reason,
-                }
-            ],
-        }
-        yield f"data: {json.dumps(payload)}\n\n"
-    yield "data: [DONE]\n\n"
-
-
-def _format_response(resp):
-    return {
-        "id": f"chatcmpl-{resp.trace_id or uuid.uuid4().hex}",
-        "object": "chat.completion",
-        "created": int(time.time()),
-        "model": resp.model_used,
-        "choices": [
-            {
-                "index": 0,
-                "message": {
-                    "role": "assistant",
-                    "content": resp.content,
-                    "tool_calls": resp.tool_calls or None,
-                },
-                "finish_reason": "stop",
-            }
-        ],
-        "usage": resp.usage,
-    }
+    return StreamingResponse(gen(), media_type="text/event-stream")

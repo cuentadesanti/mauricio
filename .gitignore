@@ -13,3 +13,7 @@ __pycache__/
 .DS_Store
 node_modules/
 *.egg-info/
+
+# notas personales generadas por el asistente — no van al repo
+knowledge/*
+!knowledge/.gitkeep
