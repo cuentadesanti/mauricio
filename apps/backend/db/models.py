@@ -1,17 +1,19 @@
 from datetime import datetime
 from uuid import uuid4
+
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     BigInteger,
+    DateTime,
+    Float,
     ForeignKey,
     Index,
     String,
-    DateTime,
     Text,
     func,
 )
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
-from pgvector.sqlalchemy import Vector
 
 
 class Base(DeclarativeBase):
@@ -97,7 +99,9 @@ class ChatSummary(Base):
 
 class MemoryRow(Base):
     __tablename__ = "memories"
-    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid4()))
+    id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid4())
+    )
     user_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("users.id"))
     kind: Mapped[str] = mapped_column(String)
     content: Mapped[str] = mapped_column(Text)
@@ -113,11 +117,19 @@ class MemoryRow(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+    valid_from: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    valid_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    superseded_by: Mapped[str | None] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("memories.id"), nullable=True
+    )
+    confidence: Mapped[float] = mapped_column(Float, default=1.0)
 
 
 class KnowledgeDoc(Base):
     __tablename__ = "knowledge_docs"
-    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid4()))
+    id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid4())
+    )
     user_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("users.id"))
     s3_key: Mapped[str] = mapped_column(String)
     title: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -130,7 +142,9 @@ class KnowledgeDoc(Base):
 
 class KnowledgeChunk(Base):
     __tablename__ = "knowledge_chunks"
-    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid4()))
+    id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid4())
+    )
     doc_id: Mapped[str] = mapped_column(
         UUID(as_uuid=False), ForeignKey("knowledge_docs.id", ondelete="CASCADE")
     )

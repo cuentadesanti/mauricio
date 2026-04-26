@@ -1,16 +1,19 @@
 import hashlib
 import json
-from sqlalchemy import select, desc, delete, and_, text
+from datetime import UTC, datetime
+
+from sqlalchemy import delete, desc, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from .models import (
     Chat,
+    ChatSummary,
+    Event,
+    KnowledgeChunk,
+    KnowledgeDoc,
+    MemoryRow,
     Message,
     User,
-    Event,
-    MemoryRow,
-    ChatSummary,
-    KnowledgeDoc,
-    KnowledgeChunk,
 )
 
 
@@ -113,8 +116,9 @@ class Repository:
         embedding: list[float],
         source_chat_id: str | None = None,
         source_message_id: str | None = None,
+        valid_from: datetime | None = None,
     ) -> MemoryRow:
-        m = MemoryRow(
+        kwargs: dict = dict(
             user_id=user_id,
             kind=kind,
             content=content,
@@ -122,6 +126,9 @@ class Repository:
             source_chat_id=source_chat_id,
             source_message_id=source_message_id,
         )
+        if valid_from:
+            kwargs["valid_from"] = valid_from
+        m = MemoryRow(**kwargs)
         self.s.add(m)
         await self.s.flush()
         return m
@@ -133,19 +140,21 @@ class Repository:
         k: int = 5,
         kinds: list[str] | None = None,
         min_score: float = 0.5,
+        active_only: bool = True,
     ) -> list[tuple[MemoryRow, float]]:
-        # cosine distance: 0 = idéntico, 2 = opuesto. score = 1 - distance.
         cos_dist = MemoryRow.embedding.cosine_distance(embedding).label("dist")
         q = (
             select(MemoryRow, cos_dist)
             .where(MemoryRow.user_id == user_id)
             .order_by(cos_dist)
-            .limit(k * 2)  # pedimos extra y filtramos por threshold
+            .limit(k * 2)
         )
+        if active_only:
+            q = q.where(MemoryRow.valid_until.is_(None))
         if kinds:
             q = q.where(MemoryRow.kind.in_(kinds))
         rows = (await self.s.execute(q)).all()
-        out = []
+        out: list[tuple[MemoryRow, float]] = []
         for row, dist in rows:
             score = 1.0 - float(dist)
             if score >= min_score:
@@ -160,7 +169,11 @@ class Repository:
         cos_dist = MemoryRow.embedding.cosine_distance(embedding).label("dist")
         q = (
             select(MemoryRow, cos_dist)
-            .where(and_(MemoryRow.user_id == user_id, MemoryRow.kind == kind))
+            .where(
+                MemoryRow.user_id == user_id,
+                MemoryRow.kind == kind,
+                MemoryRow.valid_until.is_(None),
+            )
             .order_by(cos_dist)
             .limit(1)
         )
@@ -171,6 +184,38 @@ class Repository:
         if (1.0 - float(dist)) >= threshold:
             return mem
         return None
+
+    async def list_active_memories(
+        self, user_id: str, kinds: list[str] | None = None
+    ) -> list[MemoryRow]:
+        q = (
+            select(MemoryRow)
+            .where(MemoryRow.user_id == user_id, MemoryRow.valid_until.is_(None))
+            .order_by(MemoryRow.created_at.desc())
+        )
+        if kinds:
+            q = q.where(MemoryRow.kind.in_(kinds))
+        return list((await self.s.execute(q)).scalars().all())
+
+    async def expire_memory(
+        self,
+        memory_id: str,
+        *,
+        replaced_by: str | None = None,
+        when: datetime | None = None,
+    ) -> None:
+        ts = when or datetime.now(UTC)
+        await self.s.execute(
+            update(MemoryRow)
+            .where(MemoryRow.id == memory_id, MemoryRow.valid_until.is_(None))
+            .values(valid_until=ts, superseded_by=replaced_by)
+        )
+        await self.s.flush()
+
+    async def get_memory(self, memory_id: str) -> MemoryRow | None:
+        return (
+            await self.s.execute(select(MemoryRow).where(MemoryRow.id == memory_id))
+        ).scalar_one_or_none()
 
     # ---- knowledge ----
     async def upsert_knowledge_doc(
@@ -216,7 +261,9 @@ class Repository:
 
     async def insert_chunks(self, doc_id: str, chunks: list[tuple[int, str, list[float]]]) -> None:
         for idx, content, emb in chunks:
-            self.s.add(KnowledgeChunk(doc_id=doc_id, chunk_index=idx, content=content, embedding=emb))
+            self.s.add(
+                KnowledgeChunk(doc_id=doc_id, chunk_index=idx, content=content, embedding=emb)
+            )
         await self.s.flush()
 
     async def search_chunks(

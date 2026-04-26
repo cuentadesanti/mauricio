@@ -4,10 +4,9 @@ Revision ID: 0002
 Revises: 0001
 """
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 from pgvector.sqlalchemy import Vector
-
 
 revision = "0002"
 down_revision = "0001"

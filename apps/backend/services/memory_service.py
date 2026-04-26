@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.config import settings
@@ -18,8 +20,9 @@ class MemoryService:
         content: str,
         source_chat_id: str | None = None,
         source_message_id: str | None = None,
+        valid_from: datetime | None = None,
     ) -> str | None:
-        """Guarda solo si no es duplicado. Returns id si guardada, None si duplicada."""
+        """Guarda solo si no es duplicado activo. Returns id si guardada, None si duplicada."""
         repo = Repository(session)
         embedding = await self.emb.embed_one(content)
 
@@ -39,14 +42,15 @@ class MemoryService:
             embedding=embedding,
             source_chat_id=source_chat_id,
             source_message_id=source_message_id,
+            valid_from=valid_from,
         )
         return m.id
 
     async def retrieve_relevant(
         self, session: AsyncSession, user_id: str, query: str, k: int = 5
     ) -> list[tuple[str, str, float]]:
-        """Returns list of (kind, content, score)."""
+        """Returns list of (kind, content, score) for active memories only."""
         repo = Repository(session)
         emb = await self.emb.embed_one(query)
-        results = await repo.search_memories(user_id, emb, k=k)
+        results = await repo.search_memories(user_id, emb, k=k, active_only=True)
         return [(m.kind, m.content, score) for m, score in results]

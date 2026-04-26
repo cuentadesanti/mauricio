@@ -1,6 +1,7 @@
 from ..core.config import settings
 from .base import Tool
 from .lamp import LampTool
+from .memory_edit import MemoryEditTool
 from .note_add import NoteAddTool
 from .note_list import NoteListTool
 from .note_read import NoteReadTool
@@ -14,6 +15,7 @@ def build_registry() -> dict[str, Tool]:
         "note_list": NoteListTool(),
         "note_read": NoteReadTool(),
         "note_add": NoteAddTool(),
+        "memory_edit": MemoryEditTool(),
     }
     if settings.tavily_api_key:
         tools["web_search"] = WebSearchTool()

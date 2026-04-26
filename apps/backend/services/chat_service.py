@@ -2,7 +2,7 @@ import asyncio
 import json
 import time
 import uuid
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
 
 from langfuse.decorators import observe
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -139,7 +139,7 @@ class ChatService:
     async def _collect_response(
         self, messages: list[dict], *, user_id: str, chat_id: str | None
     ) -> None:
-        """Corre el loop LLM → tools hasta obtener respuesta final. Guarda resultado en self._last_*."""
+        """Corre el loop LLM → tools hasta obtener respuesta final."""
         ctx = {"user_id": user_id, "chat_id": chat_id}
         working = list(messages)
 
@@ -213,15 +213,21 @@ class ChatService:
 
         if memories:
             mem_lines = "\n".join(f"- ({k}) {c}" for k, c, _ in memories)
-            parts.append(f"## What I know about the user\n{mem_lines}")
+            parts.append(
+                "## What I currently know about the user\n"
+                "These are facts believed to be CURRENTLY TRUE. "
+                "If the user contradicts any, treat the new info as canonical.\n"
+                f"{mem_lines}"
+            )
 
         if chunks:
             chunk_lines = []
-            for title, content, _, _score in chunks:
+            for title, content, _doc_id, _score in chunks:
                 snippet = content[:600].strip()
                 chunk_lines.append(f"### From: {title}\n{snippet}")
             parts.append(
-                "## Relevant excerpts from the user's knowledge base\n" + "\n\n".join(chunk_lines)
+                "## Relevant excerpts from the user's knowledge base\n"
+                + "\n\n".join(chunk_lines)
             )
 
         if summary:
