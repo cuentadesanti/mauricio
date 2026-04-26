@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     anthropic_api_key: str | None = None
     tavily_api_key: str | None = None
 
+    # smart home
+    kasa_username: str | None = None
+    kasa_password: str | None = None
+
     # default routing — Fase 0 es passthrough, esto es solo el modelo por defecto
     default_model: str = "anthropic/claude-haiku-4-5"
     strong_model: str = "anthropic/claude-opus-4-7"

@@ -1,5 +1,6 @@
 from ..core.config import settings
 from .base import Tool
+from .lamp import LampTool
 from .note_add import NoteAddTool
 from .note_list import NoteListTool
 from .note_read import NoteReadTool
@@ -16,6 +17,8 @@ def build_registry() -> dict[str, Tool]:
     }
     if settings.tavily_api_key:
         tools["web_search"] = WebSearchTool()
+    if settings.kasa_username and settings.kasa_password:
+        tools["lamp"] = LampTool()
     return tools
 
 
