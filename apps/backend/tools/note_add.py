@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from .base import ToolSpec
@@ -30,7 +30,8 @@ class NoteAddTool:
         tags = args.get("tags", [])
 
         slug = "".join(c if c.isalnum() or c in "-_" else "-" for c in title.lower())[:60]
-        ts = datetime.utcnow().strftime("%Y-%m-%d-%H%M%S")
+        now = datetime.now(UTC)
+        ts = now.strftime("%Y-%m-%d-%H%M%S")
         filename = f"{ts}-{slug}.md"
 
         KNOWLEDGE_DIR.mkdir(parents=True, exist_ok=True)
@@ -38,7 +39,7 @@ class NoteAddTool:
 
         frontmatter = "---\n"
         frontmatter += f"title: {title}\n"
-        frontmatter += f"created: {datetime.utcnow().isoformat()}\n"
+        frontmatter += f"created: {now.isoformat()}\n"
         if tags:
             frontmatter += f"tags: [{', '.join(tags)}]\n"
         frontmatter += "---\n\n"
