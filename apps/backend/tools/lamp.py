@@ -1,4 +1,4 @@
-from kasa import Credentials, Device
+from kasa import Credentials, Discover
 
 from ..core.config import settings
 from .base import ToolSpec
@@ -30,7 +30,7 @@ class LampTool:
     async def run(self, args: dict, ctx: dict) -> dict:
         action = args["action"]
         creds = Credentials(username=settings.kasa_username, password=settings.kasa_password)
-        lamp = await Device.connect(host=LAMP_HOST, credentials=creds)
+        lamp = await Discover.discover_single(LAMP_HOST, credentials=creds)
         try:
             await lamp.update()
             if action == "status":
