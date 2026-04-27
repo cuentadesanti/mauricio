@@ -13,6 +13,7 @@ from .models import (
     KnowledgeDoc,
     MemoryRow,
     Message,
+    Satellite,
     User,
 )
 
@@ -303,4 +304,35 @@ class Repository:
             self.s.add(
                 ChatSummary(chat_id=chat_id, summary=summary, up_to_message_id=up_to_message_id)
             )
+        await self.s.flush()
+
+    # ---- satellites ----
+    async def get_or_create_satellite(
+        self, satellite_id: str, user_id: str, location: str | None = None
+    ) -> Satellite:
+        sat = (
+            await self.s.execute(select(Satellite).where(Satellite.id == satellite_id))
+        ).scalar_one_or_none()
+        if sat:
+            sat.last_seen_at = datetime.now(UTC)
+            return sat
+        sat = Satellite(
+            id=satellite_id, user_id=user_id, location=location, mode="home_assistant"
+        )
+        self.s.add(sat)
+        await self.s.flush()
+        return sat
+
+    async def update_satellite_mode(
+        self,
+        satellite_id: str,
+        mode: str,
+        active_chat_id: str | None = None,
+        mode_until: datetime | None = None,
+    ) -> None:
+        await self.s.execute(
+            update(Satellite)
+            .where(Satellite.id == satellite_id)
+            .values(mode=mode, active_chat_id=active_chat_id, mode_until=mode_until)
+        )
         await self.s.flush()

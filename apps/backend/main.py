@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from .api import admin, chat, health
+from .api import admin, chat, health, voice
 from .core.config import settings
 from .db.repository import Repository
 from .db.session import SessionLocal
@@ -24,8 +24,9 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Personal AI Backend", version="0.0.2", lifespan=lifespan)
+app = FastAPI(title="Personal AI Backend", version="0.1.0", lifespan=lifespan)
 
 app.include_router(health.router)
 app.include_router(chat.router, prefix="/v1")
 app.include_router(admin.router)
+app.include_router(voice.router)

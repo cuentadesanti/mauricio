@@ -45,6 +45,7 @@ class ChatService:
         channel: str,
         mode: ChatMode,
         incoming_messages: list[dict],
+        ctx_extra: dict | None = None,
     ) -> AsyncIterator[str]:
         """Yields SSE-formatted chunks. La API endpoint solo los serializa."""
         repo = Repository(session)
@@ -54,8 +55,48 @@ class ChatService:
             await repo.log_event(
                 "chat.memoryless.in", {"user": user.id, "messages": incoming_messages}
             )
-            async for chunk in self._run_loop(incoming_messages, user_id=user.id, chat_id=None):
+            async for chunk in self._run_loop(
+                incoming_messages, user_id=user.id, chat_id=None, ctx_extra=ctx_extra
+            ):
                 yield chunk
+            await session.commit()
+            return
+
+        # ---- HOME_ASSISTANT: stateless pero con memoria y knowledge ----
+        if mode == ChatMode.HOME_ASSISTANT:
+            last_user_text = self._extract_text(incoming_messages[-1])
+
+            memories_task = self.memory.retrieve_relevant(session, user.id, last_user_text, k=5)
+            chunks_task = self.knowledge.search(session, user.id, last_user_text, k=3)
+            memories, chunks = await asyncio.gather(memories_task, chunks_task)
+
+            # construye system prompt enriquecido — pero el system del caller manda
+            base_system = (
+                incoming_messages[0]["content"]
+                if incoming_messages and incoming_messages[0]["role"] == "system"
+                else ""
+            )
+            enriched_system = self._build_voice_system_prompt(
+                base_system=base_system, memories=memories, chunks=chunks
+            )
+            raw_msgs = [m for m in incoming_messages if m["role"] != "system"]
+            context = [{"role": "system", "content": enriched_system}, *raw_msgs]
+
+            await repo.log_event(
+                "voice.home_assistant.in", {"user": user.id, "messages": incoming_messages}
+            )
+            async for chunk in self._run_loop(
+                context, user_id=user.id, chat_id=None, ctx_extra=ctx_extra
+            ):
+                yield chunk
+            # NO persistimos el chat — pero sí extraemos memoria
+            asyncio.create_task(
+                self._post_turn_jobs_no_chat(
+                    user_id=user.id,
+                    user_text=last_user_text,
+                    assistant_text=self._last_text,
+                )
+            )
             await session.commit()
             return
 
@@ -104,7 +145,9 @@ class ChatService:
         )
         context = [{"role": "system", "content": system_msg}, *raw_msgs]
 
-        async for chunk in self._run_loop(context, user_id=user.id, chat_id=chat.id):
+        async for chunk in self._run_loop(
+            context, user_id=user.id, chat_id=chat.id, ctx_extra=ctx_extra
+        ):
             yield chunk
 
         # actualizar firma + persistir respuesta del assistant
@@ -137,10 +180,17 @@ class ChatService:
 
     @observe(name="tool_loop")
     async def _collect_response(
-        self, messages: list[dict], *, user_id: str, chat_id: str | None
+        self,
+        messages: list[dict],
+        *,
+        user_id: str,
+        chat_id: str | None,
+        ctx_extra: dict | None = None,
     ) -> None:
         """Corre el loop LLM → tools hasta obtener respuesta final."""
-        ctx = {"user_id": user_id, "chat_id": chat_id}
+        ctx: dict = {"user_id": user_id, "chat_id": chat_id}
+        if ctx_extra:
+            ctx.update(ctx_extra)
         working = list(messages)
 
         for _ in range(MAX_TOOL_LOOPS):
@@ -192,13 +242,20 @@ class ChatService:
         self._last_trace = ""
 
     async def _run_loop(
-        self, messages: list[dict], *, user_id: str, chat_id: str | None
+        self,
+        messages: list[dict],
+        *,
+        user_id: str,
+        chat_id: str | None,
+        ctx_extra: dict | None = None,
     ) -> AsyncIterator[str]:
-        await self._collect_response(messages, user_id=user_id, chat_id=chat_id)
+        await self._collect_response(
+            messages, user_id=user_id, chat_id=chat_id, ctx_extra=ctx_extra
+        )
         async for sse in _fake_stream(self._last_text, self._last_model):
             yield sse
 
-    # ---- helpers nuevos ----
+    # ---- helpers ----
 
     def _extract_text(self, msg: dict) -> str:
         c = msg.get("content")
@@ -235,6 +292,20 @@ class ChatService:
 
         return "\n\n".join(parts)
 
+    def _build_voice_system_prompt(self, base_system: str, memories, chunks) -> str:
+        parts = [base_system] if base_system else []
+        if memories:
+            mem_lines = "\n".join(f"- ({k}) {c}" for k, c, _ in memories)
+            parts.append(f"## What I know about the user\n{mem_lines}")
+        if chunks:
+            chunk_lines = []
+            for title, content, _doc_id, _score in chunks:
+                chunk_lines.append(f"### From {title}\n{content[:400]}")
+            parts.append(
+                "## Relevant from knowledge base\n" + "\n\n".join(chunk_lines)
+            )
+        return "\n\n".join(parts)
+
     async def _post_turn_jobs(
         self,
         *,
@@ -260,6 +331,23 @@ class ChatService:
                 await self.summarizer.maybe_summarize(s, chat_id=chat_id)
         except Exception as e:
             print(f"[post_turn_jobs] error: {e}")
+
+    async def _post_turn_jobs_no_chat(
+        self, *, user_id: str, user_text: str, assistant_text: str
+    ):
+        """Como _post_turn_jobs pero sin chat (home_assistant turns no crean chat)."""
+        try:
+            async with SessionLocal() as s:
+                await self.extractor.extract_and_store(
+                    s,
+                    user_id=user_id,
+                    chat_id=None,
+                    source_message_id=None,
+                    user_text=user_text,
+                    assistant_text=assistant_text,
+                )
+        except Exception as e:
+            print(f"[post_turn_jobs_no_chat] {e}")
 
 
 async def _fake_stream(text: str, model: str, chunk_size: int = 20):

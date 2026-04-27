@@ -1,10 +1,12 @@
 from ..core.config import settings
 from .base import Tool
+from .end_voice_chat import EndVoiceChatTool
 from .lamp import LampTool
 from .memory_edit import MemoryEditTool
 from .note_add import NoteAddTool
 from .note_list import NoteListTool
 from .note_read import NoteReadTool
+from .start_voice_chat import StartVoiceChatTool
 from .time_now import TimeNowTool
 from .web_search import WebSearchTool
 
@@ -16,6 +18,8 @@ def build_registry() -> dict[str, Tool]:
         "note_read": NoteReadTool(),
         "note_add": NoteAddTool(),
         "memory_edit": MemoryEditTool(),
+        "start_voice_chat": StartVoiceChatTool(),
+        "end_voice_chat": EndVoiceChatTool(),
     }
     if settings.tavily_api_key:
         tools["web_search"] = WebSearchTool()

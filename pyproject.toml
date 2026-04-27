@@ -46,6 +46,8 @@ select = ["E", "F", "I", "UP", "B"]
 # prompt strings can exceed line limit; zip strict not needed for equal-length lists
 "apps/backend/services/memory_extractor.py" = ["E501"]
 "apps/backend/services/summarizer.py" = ["E501"]
+"apps/backend/services/voice_orchestrator.py" = ["E501"]
+"apps/backend/tools/end_voice_chat.py" = ["E501"]
 "apps/backend/services/knowledge_service.py" = ["B905"]
 
 [tool.pytest.ini_options]

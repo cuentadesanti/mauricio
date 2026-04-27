@@ -151,3 +151,19 @@ class KnowledgeChunk(Base):
     chunk_index: Mapped[int] = mapped_column()
     content: Mapped[str] = mapped_column(Text)
     embedding: Mapped[list[float] | None] = mapped_column(Vector(1536), nullable=True)
+
+
+class Satellite(Base):
+    __tablename__ = "satellites"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("users.id"))
+    location: Mapped[str | None] = mapped_column(String, nullable=True)
+    mode: Mapped[str] = mapped_column(String, default="home_assistant")
+    active_chat_id: Mapped[str | None] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("chats.id"), nullable=True
+    )
+    mode_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

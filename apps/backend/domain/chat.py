@@ -6,6 +6,7 @@ from pydantic import BaseModel
 class ChatMode(StrEnum):
     MEMORYLESS = "memoryless"
     PERSISTENT = "persistent"
+    HOME_ASSISTANT = "home_assistant"
 
 
 class InboundMessage(BaseModel):

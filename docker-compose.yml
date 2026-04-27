@@ -70,8 +70,36 @@ services:
       meilisearch:
         condition: service_started
 
+  whisper:
+    image: rhasspy/wyoming-whisper:latest
+    command:
+      - --model
+      - medium
+      - --language
+      - es
+      - --beam-size
+      - "1"
+    ports:
+      - "10300:10300"
+    volumes:
+      - whisper_data:/data
+    restart: unless-stopped
+
+  piper:
+    image: rhasspy/wyoming-piper:latest
+    command:
+      - --voice
+      - es_ES-mls_9972-low
+    ports:
+      - "10200:10200"
+    volumes:
+      - piper_data:/data
+    restart: unless-stopped
+
 volumes:
   pg_data:
   mqtt_data:
   mongo_data:
   meili_data:
+  whisper_data:
+  piper_data:
