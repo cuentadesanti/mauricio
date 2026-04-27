@@ -135,3 +135,112 @@ async def test_web_search_missing_key_raises():
             raise AssertionError("Should have raised RuntimeError")
         except RuntimeError as e:
             assert "TAVILY_API_KEY" in str(e)
+
+
+def test_tool_specs_filter_voice_only_from_web():
+    from backend.tools.registry import openai_tool_specs
+
+    web_specs = openai_tool_specs(channel="web")
+    voice_specs = openai_tool_specs(channel="voice")
+
+    web_names = {s["function"]["name"] for s in web_specs}
+    voice_names = {s["function"]["name"] for s in voice_specs}
+
+    # voice tools should NOT appear in web
+    assert "start_voice_chat" not in web_names
+    assert "end_voice_chat" not in web_names
+
+    # voice tools SHOULD appear in voice
+    assert "start_voice_chat" in voice_names
+    assert "end_voice_chat" in voice_names
+
+    # universal tools appear in both
+    assert "time_now" in web_names
+    assert "time_now" in voice_names
+
+
+def test_tool_specs_default_channel_excludes_voice():
+    from backend.tools.registry import openai_tool_specs
+
+    default_specs = openai_tool_specs()  # channel="any"
+    default_names = {s["function"]["name"] for s in default_specs}
+
+    # "any" channel should still see universal tools
+    assert "time_now" in default_names
+    # voice-only tools should NOT match "any" (they require "voice")
+    assert "start_voice_chat" not in default_names
+
+
+async def test_memory_list_no_user_returns_error():
+    from backend.tools.memory_list import MemoryListTool
+
+    tool = MemoryListTool()
+    result = await tool.run({}, ctx={})
+    assert "error" in result
+
+
+async def test_memory_list_returns_memories():
+    from unittest.mock import MagicMock
+    from datetime import datetime, timezone
+    from backend.tools.memory_list import MemoryListTool
+
+    tool = MemoryListTool()
+
+    mock_session = AsyncMock()
+    mock_repo = AsyncMock()
+    mock_mem = MagicMock(
+        kind="fact", content="user lives in Madrid",
+        valid_from=datetime(2025, 1, 1, tzinfo=timezone.utc),
+    )
+    mock_repo.list_active_memories.return_value = [mock_mem]
+
+    with (
+        patch("backend.tools.memory_list.SessionLocal", return_value=mock_session),
+        patch("backend.tools.memory_list.Repository", return_value=mock_repo),
+    ):
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+
+        result = await tool.run({"kind": "fact"}, ctx={"user_id": "u1"})
+
+    assert result["count"] == 1
+    assert result["memories"][0]["content"] == "user lives in Madrid"
+    mock_repo.list_active_memories.assert_called_once_with("u1", kinds=["fact"])
+
+
+async def test_chat_search_no_user_returns_error():
+    from backend.tools.chat_search import ChatSearchTool
+
+    tool = ChatSearchTool()
+    result = await tool.run({"query": "test"}, ctx={})
+    assert "error" in result
+
+
+async def test_chat_search_returns_matches():
+    from unittest.mock import MagicMock
+    from datetime import datetime, timezone
+    from backend.tools.chat_search import ChatSearchTool
+
+    tool = ChatSearchTool()
+
+    mock_session = AsyncMock()
+    mock_repo = AsyncMock()
+    mock_msg = MagicMock(
+        role="user",
+        content={"text": "let's talk about Python"},
+        created_at=datetime(2025, 6, 1, tzinfo=timezone.utc),
+    )
+    mock_repo.search_messages.return_value = [(mock_msg, "chat-abc")]
+
+    with (
+        patch("backend.tools.chat_search.SessionLocal", return_value=mock_session),
+        patch("backend.tools.chat_search.Repository", return_value=mock_repo),
+    ):
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+
+        result = await tool.run({"query": "Python"}, ctx={"user_id": "u1"})
+
+    assert result["count"] == 1
+    assert "Python" in result["matches"][0]["text"]
+    mock_repo.search_messages.assert_called_once_with("u1", "Python", limit=5)

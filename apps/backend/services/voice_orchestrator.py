@@ -105,23 +105,22 @@ class VoiceOrchestrator:
     async def _handle_voice_chat(
         self, satellite_id: str, chat_id: str, transcript: str
     ) -> str:
-        """Modo conversación: persistencia real, sigue el chat existente."""
-        # cargamos historia del chat para que el ChatService pueda hacer signature match
+        """Modo conversación: persistencia real, sigue el chat existente.
+        MM-5: single session for history load + LLM turn + timeout extension."""
         async with SessionLocal() as session:
             repo = Repository(session)
             db_messages = await repo.get_messages(chat_id, limit=30)
 
-        history = [
-            {"role": m.role, "content": (m.content or {}).get("text", "")}
-            for m in db_messages
-        ]
-        messages = (
-            [{"role": "system", "content": VOICE_CHAT_PROMPT}]
-            + history
-            + [{"role": "user", "content": transcript}]
-        )
+            history = [
+                {"role": m.role, "content": (m.content or {}).get("text", "")}
+                for m in db_messages
+            ]
+            messages = (
+                [{"role": "system", "content": VOICE_CHAT_PROMPT}]
+                + history
+                + [{"role": "user", "content": transcript}]
+            )
 
-        async with SessionLocal() as session:
             chunks: list[str] = []
             async for sse in self.chat.handle(
                 session,
@@ -134,11 +133,8 @@ class VoiceOrchestrator:
                 text = _extract_text_from_sse(sse)
                 if text:
                     chunks.append(text)
-            await session.commit()
 
-        # extender timeout
-        async with SessionLocal() as session:
-            repo = Repository(session)
+            # extend timeout within the same session
             await repo.update_satellite_mode(
                 satellite_id,
                 "voice_chat",

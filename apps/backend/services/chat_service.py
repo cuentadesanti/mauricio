@@ -3,6 +3,7 @@ import json
 import time
 import uuid
 from collections.abc import AsyncIterator
+from dataclasses import dataclass, field
 
 from langfuse.decorators import observe
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,6 +25,16 @@ MAX_TOOL_LOOPS = 5
 RECENT_MESSAGES_WINDOW = 30  # cuántos cargamos al continuar un chat
 
 
+@dataclass
+class _LoopResult:
+    """CR-2: return value from _collect_response — no shared mutable state."""
+
+    text: str = ""
+    model: str = ""
+    usage: dict = field(default_factory=dict)
+    trace_id: str = ""
+
+
 class ChatService:
     def __init__(self, gateway: LiteLLMGateway):
         self.gw = gateway
@@ -32,10 +43,6 @@ class ChatService:
         self.memory = MemoryService(self.emb)
         self.extractor = MemoryExtractor(self.gw, self.memory)
         self.summarizer = Summarizer(self.gw)
-        self._last_text = ""
-        self._last_model = ""
-        self._last_usage = {}
-        self._last_trace = ""
 
     async def handle(
         self,
@@ -55,10 +62,12 @@ class ChatService:
             await repo.log_event(
                 "chat.memoryless.in", {"user": user.id, "messages": incoming_messages}
             )
-            async for chunk in self._run_loop(
-                incoming_messages, user_id=user.id, chat_id=None, ctx_extra=ctx_extra
-            ):
-                yield chunk
+            result = await self._collect_response(
+                incoming_messages, user_id=user.id, chat_id=None,
+                channel=channel, ctx_extra=ctx_extra
+            )
+            async for sse in _fake_stream(result.text, result.model):
+                yield sse
             await session.commit()
             return
 
@@ -70,7 +79,6 @@ class ChatService:
             chunks_task = self.knowledge.search(session, user.id, last_user_text, k=3)
             memories, chunks = await asyncio.gather(memories_task, chunks_task)
 
-            # construye system prompt enriquecido — pero el system del caller manda
             base_system = (
                 incoming_messages[0]["content"]
                 if incoming_messages and incoming_messages[0]["role"] == "system"
@@ -85,49 +93,62 @@ class ChatService:
             await repo.log_event(
                 "voice.home_assistant.in", {"user": user.id, "messages": incoming_messages}
             )
-            async for chunk in self._run_loop(
-                context, user_id=user.id, chat_id=None, ctx_extra=ctx_extra
-            ):
-                yield chunk
-            # NO persistimos el chat — pero sí extraemos memoria
+            result = await self._collect_response(
+                context, user_id=user.id, chat_id=None,
+                channel=channel, ctx_extra=ctx_extra
+            )
+            async for sse in _fake_stream(result.text, result.model):
+                yield sse
             asyncio.create_task(
                 self._post_turn_jobs_no_chat(
                     user_id=user.id,
                     user_text=last_user_text,
-                    assistant_text=self._last_text,
+                    assistant_text=result.text,
                 )
             )
             await session.commit()
             return
 
         # ---- PERSISTENT con retrieval híbrido ----
-        # firma del prefix para reconciliar el chat
-        prior = incoming_messages[:-1]
-        signature_in = hash_messages(prior) if prior else ""
+        # CR-1: si el caller fuerza un chat_id (voice_chat), usarlo directamente
+        force_chat_id = (ctx_extra or {}).get("force_chat_id")
 
-        chat = (
-            await repo.find_chat_by_signature(user.id, signature_in) if signature_in else None
-        )
-        if not chat:
-            chat = await repo.create_chat(user.id, channel=channel, mode=mode.value)
-            # persistimos toda la historia recibida (es la primera vez que la vemos)
-            for m in incoming_messages:
-                await repo.add_message(
-                    chat.id, role=m["role"], content={"text": m.get("content", "")}
-                )
-        else:
-            # continuación: solo persistimos el nuevo user message
+        if force_chat_id:
+            chat = await repo.get_chat(force_chat_id)
+            if not chat:
+                raise ValueError(f"force_chat_id {force_chat_id} not found")
             new_user_msg = incoming_messages[-1]
             await repo.add_message(
                 chat.id,
                 role=new_user_msg["role"],
                 content={"text": new_user_msg.get("content", "")},
             )
+        else:
+            # web/persistent normal: matching por firma
+            prior = incoming_messages[:-1]
+            signature_in = hash_messages(prior) if prior else ""
+            chat = (
+                await repo.find_chat_by_signature(user.id, signature_in)
+                if signature_in
+                else None
+            )
+            if not chat:
+                chat = await repo.create_chat(user.id, channel=channel, mode=mode.value)
+                for m in incoming_messages:
+                    await repo.add_message(
+                        chat.id, role=m["role"], content={"text": m.get("content", "")}
+                    )
+            else:
+                new_user_msg = incoming_messages[-1]
+                await repo.add_message(
+                    chat.id,
+                    role=new_user_msg["role"],
+                    content={"text": new_user_msg.get("content", "")},
+                )
 
         # ---- construir contexto enriquecido ----
         last_user_text = self._extract_text(incoming_messages[-1])
 
-        # disparar las 3 búsquedas en paralelo
         memories_task = self.memory.retrieve_relevant(session, user.id, last_user_text, k=5)
         chunks_task = self.knowledge.search(session, user.id, last_user_text, k=5)
         summary_task = repo.get_summary(chat.id)
@@ -138,40 +159,40 @@ class ChatService:
 
         system_msg = self._build_system_prompt(memories, chunks, summary)
 
-        # mensajes raw que mandamos al LLM:
-        # si hay summary, solo los últimos 10 de la conversación
         raw_msgs = (
             incoming_messages[-10:] if summary else incoming_messages[-RECENT_MESSAGES_WINDOW:]
         )
         context = [{"role": "system", "content": system_msg}, *raw_msgs]
 
-        async for chunk in self._run_loop(
-            context, user_id=user.id, chat_id=chat.id, ctx_extra=ctx_extra
-        ):
-            yield chunk
+        result = await self._collect_response(
+            context, user_id=user.id, chat_id=chat.id,
+            channel=channel, ctx_extra=ctx_extra
+        )
+        async for sse in _fake_stream(result.text, result.model):
+            yield sse
 
-        # actualizar firma + persistir respuesta del assistant
-        full_history = incoming_messages + [{"role": "assistant", "content": self._last_text}]
-        new_signature = hash_messages(full_history)
-        await repo.update_chat_signature(chat, new_signature)
+        # CR-1: solo actualizar firma si no es force_chat_id (voz no tiene firma)
+        if not force_chat_id:
+            full_history = incoming_messages + [{"role": "assistant", "content": result.text}]
+            new_signature = hash_messages(full_history)
+            await repo.update_chat_signature(chat, new_signature)
 
         assistant_row = await repo.add_message(
             chat.id,
             role="assistant",
-            content={"text": self._last_text},
-            model=self._last_model,
-            token_usage=self._last_usage,
-            trace_id=self._last_trace,
+            content={"text": result.text},
+            model=result.model,
+            token_usage=result.usage,
+            trace_id=result.trace_id,
         )
         await session.commit()
 
-        # ---- jobs async (no bloquean al usuario, ya respondió) ----
         asyncio.create_task(
             self._post_turn_jobs(
                 user_id=user.id,
                 chat_id=chat.id,
                 user_text=last_user_text,
-                assistant_text=self._last_text,
+                assistant_text=result.text,
                 assistant_msg_id=assistant_row.id,
             )
         )
@@ -185,9 +206,11 @@ class ChatService:
         *,
         user_id: str,
         chat_id: str | None,
+        channel: str = "web",
         ctx_extra: dict | None = None,
-    ) -> None:
-        """Corre el loop LLM → tools hasta obtener respuesta final."""
+    ) -> _LoopResult:
+        """CR-2: returns result by value — safe for concurrent calls.
+        TD-6: channel filters which tools the LLM sees."""
         ctx: dict = {"user_id": user_id, "chat_id": chat_id}
         if ctx_extra:
             ctx.update(ctx_extra)
@@ -197,32 +220,33 @@ class ChatService:
             req = CompletionRequest(
                 messages=working,
                 model_hint=pick_model(working),
-                tools=openai_tool_specs() or None,
+                tools=openai_tool_specs(channel=channel) or None,
                 metadata={"chat_id": chat_id, "user_id": user_id},
             )
             resp = await self.gw.complete(req)
 
             if not resp.tool_calls:
-                self._last_text = resp.content
-                self._last_model = resp.model_used
-                self._last_usage = resp.usage
-                self._last_trace = resp.trace_id
-                return
+                return _LoopResult(
+                    text=resp.content,
+                    model=resp.model_used,
+                    usage=resp.usage,
+                    trace_id=resp.trace_id,
+                )
 
-            assistant_msg = {
-                "role": "assistant",
-                "content": resp.content or None,
-                "tool_calls": resp.tool_calls,
-            }
-            working.append(assistant_msg)
+            working.append(
+                {
+                    "role": "assistant",
+                    "content": resp.content or None,
+                    "tool_calls": resp.tool_calls,
+                }
+            )
 
             for tc in resp.tool_calls:
                 fn = tc["function"]
-                tool_name = fn["name"]
                 args = json.loads(fn.get("arguments", "{}") or "{}")
-                tool = REGISTRY.get(tool_name)
+                tool = REGISTRY.get(fn["name"])
                 if not tool:
-                    result = {"error": f"unknown tool {tool_name}"}
+                    result = {"error": f"unknown tool {fn['name']}"}
                 else:
                     try:
                         result = await tool.run(args, ctx)
@@ -236,24 +260,12 @@ class ChatService:
                     }
                 )
 
-        self._last_text = "[stopped: too many tool iterations]"
-        self._last_model = "n/a"
-        self._last_usage = {}
-        self._last_trace = ""
-
-    async def _run_loop(
-        self,
-        messages: list[dict],
-        *,
-        user_id: str,
-        chat_id: str | None,
-        ctx_extra: dict | None = None,
-    ) -> AsyncIterator[str]:
-        await self._collect_response(
-            messages, user_id=user_id, chat_id=chat_id, ctx_extra=ctx_extra
+        return _LoopResult(
+            text="[stopped: too many tool iterations]",
+            model="n/a",
+            usage={},
+            trace_id="",
         )
-        async for sse in _fake_stream(self._last_text, self._last_model):
-            yield sse
 
     # ---- helpers ----
 
@@ -315,11 +327,10 @@ class ChatService:
         assistant_text: str,
         assistant_msg_id: str,
     ):
-        """Corre extracción de memoria + summarization en background.
-        Cada job abre su propia session (la del request ya se cerró)."""
+        """TD-10: structured event logging for background jobs."""
         try:
             async with SessionLocal() as s:
-                await self.extractor.extract_and_store(
+                stats = await self.extractor.extract_and_store(
                     s,
                     user_id=user_id,
                     chat_id=chat_id,
@@ -327,9 +338,24 @@ class ChatService:
                     assistant_text=assistant_text,
                     source_message_id=assistant_msg_id,
                 )
+                await Repository(s).log_event("memory.extracted", stats)
+                await s.commit()
             async with SessionLocal() as s:
-                await self.summarizer.maybe_summarize(s, chat_id=chat_id)
+                summarized = await self.summarizer.maybe_summarize(s, chat_id=chat_id)
+                await Repository(s).log_event(
+                    "summary.attempted", {"summarized": summarized, "chat_id": chat_id}
+                )
+                await s.commit()
         except Exception as e:
+            try:
+                async with SessionLocal() as s:
+                    await Repository(s).log_event(
+                        "post_turn_jobs.error",
+                        {"error": str(e), "chat_id": chat_id, "user_id": user_id},
+                    )
+                    await s.commit()
+            except Exception:
+                pass  # can't log the error about logging
             print(f"[post_turn_jobs] error: {e}")
 
     async def _post_turn_jobs_no_chat(
@@ -338,7 +364,7 @@ class ChatService:
         """Como _post_turn_jobs pero sin chat (home_assistant turns no crean chat)."""
         try:
             async with SessionLocal() as s:
-                await self.extractor.extract_and_store(
+                stats = await self.extractor.extract_and_store(
                     s,
                     user_id=user_id,
                     chat_id=None,
@@ -346,16 +372,30 @@ class ChatService:
                     user_text=user_text,
                     assistant_text=assistant_text,
                 )
+                await Repository(s).log_event("memory.extracted", {**stats, "source": "voice"})
+                await s.commit()
         except Exception as e:
+            try:
+                async with SessionLocal() as s:
+                    await Repository(s).log_event(
+                        "post_turn_jobs.error",
+                        {"error": str(e), "user_id": user_id, "source": "voice"},
+                    )
+                    await s.commit()
+            except Exception:
+                pass
             print(f"[post_turn_jobs_no_chat] {e}")
 
 
-async def _fake_stream(text: str, model: str, chunk_size: int = 20):
-    """Convierte un string en chunks SSE para que LibreChat lo muestre fluido."""
+async def _fake_stream(text: str, model: str, words_per_chunk: int = 4):
+    """TD-8: Word-based SSE chunks so words aren't split mid-stream."""
     completion_id = f"chatcmpl-{uuid.uuid4().hex}"
     created = int(time.time())
-    for i in range(0, len(text), chunk_size):
-        chunk = text[i : i + chunk_size]
+    words = text.split(" ")
+    for i in range(0, len(words), words_per_chunk):
+        chunk = " ".join(words[i : i + words_per_chunk])
+        if i + words_per_chunk < len(words):
+            chunk += " "
         payload = {
             "id": completion_id,
             "object": "chat.completion.chunk",
@@ -370,8 +410,7 @@ async def _fake_stream(text: str, model: str, chunk_size: int = 20):
             ],
         }
         yield f"data: {json.dumps(payload)}\n\n"
-        await asyncio.sleep(0.015)
-    # mensaje final con finish_reason
+        await asyncio.sleep(0.04)
     final = {
         "id": completion_id,
         "object": "chat.completion.chunk",

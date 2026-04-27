@@ -65,6 +65,11 @@ class Repository:
         chat.signature = signature
         await self.s.flush()
 
+    async def get_chat(self, chat_id: str) -> Chat | None:
+        return (
+            await self.s.execute(select(Chat).where(Chat.id == chat_id))
+        ).scalar_one_or_none()
+
     # ---- messages ----
     async def add_message(
         self,
@@ -101,6 +106,23 @@ class Repository:
             text("SELECT count(*) FROM messages WHERE chat_id = :cid"), {"cid": chat_id}
         )
         return res.scalar_one()
+
+    async def search_messages(
+        self, user_id: str, query: str, limit: int = 10
+    ) -> list[tuple[Message, str]]:
+        """MM-2: Full-text search across a user's messages. Returns (message, chat_id)."""
+        stmt = (
+            select(Message, Chat.id)
+            .join(Chat, Chat.id == Message.chat_id)
+            .where(
+                Chat.user_id == user_id,
+                Message.content["text"].astext.ilike(f"%{query}%"),
+            )
+            .order_by(Message.created_at.desc())
+            .limit(limit)
+        )
+        rows = (await self.s.execute(stmt)).all()
+        return [(msg, chat_id) for msg, chat_id in rows]
 
     # ---- events ----
     async def log_event(self, topic: str, payload: dict) -> None:
@@ -314,7 +336,12 @@ class Repository:
             await self.s.execute(select(Satellite).where(Satellite.id == satellite_id))
         ).scalar_one_or_none()
         if sat:
-            sat.last_seen_at = datetime.now(UTC)
+            # CR-3: explicit UPDATE avoids race with concurrent requests
+            await self.s.execute(
+                update(Satellite)
+                .where(Satellite.id == satellite_id)
+                .values(last_seen_at=datetime.now(UTC))
+            )
             return sat
         sat = Satellite(
             id=satellite_id, user_id=user_id, location=location, mode="home_assistant"

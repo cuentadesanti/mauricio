@@ -21,7 +21,7 @@ class LiteLLMGateway:
     async def complete(self, req: CompletionRequest) -> CompletionResponse:
         model = req.model_hint or settings.default_model
 
-        response = await litellm.acompletion(
+        kwargs = dict(
             model=model,
             messages=req.messages,
             tools=req.tools,
@@ -29,6 +29,10 @@ class LiteLLMGateway:
             max_tokens=req.max_tokens,
             metadata={"trace_metadata": req.metadata},
         )
+        if req.response_format:
+            kwargs["response_format"] = req.response_format
+
+        response = await litellm.acompletion(**kwargs)
         choice = response.choices[0]
         usage = (
             response.usage.model_dump()
@@ -46,7 +50,7 @@ class LiteLLMGateway:
 
     async def stream(self, req: CompletionRequest):
         model = req.model_hint or settings.default_model
-        response = await litellm.acompletion(
+        kwargs = dict(
             model=model,
             messages=req.messages,
             tools=req.tools,
@@ -55,5 +59,8 @@ class LiteLLMGateway:
             stream=True,
             metadata={"trace_metadata": req.metadata},
         )
+        if req.response_format:
+            kwargs["response_format"] = req.response_format
+        response = await litellm.acompletion(**kwargs)
         async for chunk in response:
             yield chunk

@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     # smart home
     kasa_username: str | None = None
     kasa_password: str | None = None
+    lamp_host: str | None = None
 
     # default routing — Fase 0 es passthrough, esto es solo el modelo por defecto
     default_model: str = "anthropic/claude-haiku-4-5"
@@ -31,6 +32,9 @@ class Settings(BaseSettings):
     default_user_handle: str = "me"  # single-user v0
 
     # Phase 2 — Knowledge & Memory
+    # TD-3: embedding_model is coupled to Vector(1536) in the DB schema.
+    # Changing model requires a migration to alter the vector dimension.
+    # Local fallback: sentence-transformers/all-MiniLM-L6-v2 (384 dims).
     embedding_model: str = "openai/text-embedding-3-small"
     knowledge_dir: str = "/app/knowledge"
     knowledge_s3_bucket: str | None = None

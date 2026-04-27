@@ -17,7 +17,11 @@ def _write_note(path: Path, title: str, content: str, tags: list[str], now: date
 
 
 def _find_existing(title: str) -> Path | None:
-    """Busca una nota con el mismo título (case-insensitive)."""
+    """Busca una nota con el mismo título (case-insensitive).
+
+    TD-4: This scans all .md files on disk — O(n). Should be replaced with a
+    DB query on knowledge_docs.title once note_add gets user_id from ctx.
+    """
     if not KNOWLEDGE_DIR.exists():
         return None
     title_lower = title.lower().strip()

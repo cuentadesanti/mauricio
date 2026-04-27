@@ -11,6 +11,7 @@ class CompletionRequest(BaseModel):
     temperature: float = 0.7
     max_tokens: int | None = None
     metadata: dict = {}
+    response_format: dict | None = None  # TD-9: e.g. {"type": "json_object"}
 
 
 class CompletionResponse(BaseModel):

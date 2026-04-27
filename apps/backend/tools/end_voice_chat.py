@@ -4,6 +4,7 @@ from .base import ToolSpec
 
 
 class EndVoiceChatTool:
+    contexts = ("voice",)
     spec = ToolSpec(
         name="end_voice_chat",
         description=(

@@ -46,7 +46,7 @@ class MemoryExtractor:
         session: AsyncSession,
         *,
         user_id: str,
-        chat_id: str,
+        chat_id: str | None,
         user_text: str,
         assistant_text: str,
         source_message_id: str | None = None,
@@ -71,7 +71,8 @@ class MemoryExtractor:
             model_hint=settings.extractor_model,
             temperature=0.0,
             max_tokens=800,
-            metadata={"job": "memory_extraction", "chat_id": chat_id},
+            metadata={"job": "memory_extraction", "chat_id": chat_id or "no-chat"},
+            response_format={"type": "json_object"},
         )
         resp = await self.gw.complete(req)
         try:

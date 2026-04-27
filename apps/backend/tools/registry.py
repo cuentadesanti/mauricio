@@ -1,8 +1,10 @@
 from ..core.config import settings
 from .base import Tool
+from .chat_search import ChatSearchTool
 from .end_voice_chat import EndVoiceChatTool
 from .lamp import LampTool
 from .memory_edit import MemoryEditTool
+from .memory_list import MemoryListTool
 from .note_add import NoteAddTool
 from .note_list import NoteListTool
 from .note_read import NoteReadTool
@@ -18,12 +20,14 @@ def build_registry() -> dict[str, Tool]:
         "note_read": NoteReadTool(),
         "note_add": NoteAddTool(),
         "memory_edit": MemoryEditTool(),
+        "memory_list": MemoryListTool(),
+        "chat_search": ChatSearchTool(),
         "start_voice_chat": StartVoiceChatTool(),
         "end_voice_chat": EndVoiceChatTool(),
     }
     if settings.tavily_api_key:
         tools["web_search"] = WebSearchTool()
-    if settings.kasa_username and settings.kasa_password:
+    if settings.kasa_username and settings.kasa_password and settings.lamp_host:
         tools["lamp"] = LampTool()
     return tools
 
@@ -31,9 +35,15 @@ def build_registry() -> dict[str, Tool]:
 REGISTRY = build_registry()
 
 
-def openai_tool_specs() -> list[dict]:
-    """Formato OpenAI tools[] para mandar al LLM."""
+def _tool_matches_channel(tool, channel: str) -> bool:
+    contexts = getattr(tool, "contexts", ("any",))
+    return "any" in contexts or channel in contexts
+
+
+def openai_tool_specs(channel: str = "any") -> list[dict]:
+    """Formato OpenAI tools[] para mandar al LLM, filtrado por canal."""
     return [
         {"type": "function", "function": tool.spec.model_dump()}
         for tool in REGISTRY.values()
+        if _tool_matches_channel(tool, channel)
     ]

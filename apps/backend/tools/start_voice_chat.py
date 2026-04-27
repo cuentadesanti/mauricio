@@ -7,6 +7,7 @@ from .base import ToolSpec
 
 
 class StartVoiceChatTool:
+    contexts = ("voice",)
     spec = ToolSpec(
         name="start_voice_chat",
         description=(

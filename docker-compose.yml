@@ -96,6 +96,17 @@ services:
       - piper_data:/data
     restart: unless-stopped
 
+  openwakeword:
+    image: rhasspy/wyoming-openwakeword:latest
+    command:
+      - --preload-model
+      - ok_nabu
+      - --threshold
+      - "0.5"
+    ports:
+      - "10400:10400"
+    restart: unless-stopped
+
 volumes:
   pg_data:
   mqtt_data:

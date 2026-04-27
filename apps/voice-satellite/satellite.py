@@ -28,17 +28,27 @@ from wyoming.client import AsyncTcpClient
 from wyoming.tts import Synthesize
 from wyoming.wake import Detection
 
+
+def _play(path: str) -> None:
+    if sys.platform == "darwin":
+        os.system(f"afplay {path}")
+    elif sys.platform.startswith("linux"):
+        os.system(f"aplay -q {path}")
+    else:
+        print(f"[tts] unsupported platform {sys.platform}, audio at {path}")
+
+
 SATELLITE_ID = os.getenv("SATELLITE_ID", "living-room")
 SERVER = os.getenv("SERVER_HOST", "192.168.1.100")
 BACKEND_URL = os.getenv("BACKEND_URL", f"http://{SERVER}:8000")
 BACKEND_KEY = os.getenv("BACKEND_API_KEY")
 
-WAKE_HOST = "localhost"
-WAKE_PORT = 10400
-STT_HOST = SERVER
-STT_PORT = 10300
-TTS_HOST = SERVER
-TTS_PORT = 10200
+WAKE_HOST = os.getenv("WAKE_HOST", "localhost")
+WAKE_PORT = int(os.getenv("WAKE_PORT", "10400"))
+STT_HOST = os.getenv("STT_HOST", SERVER)
+STT_PORT = int(os.getenv("STT_PORT", "10300"))
+TTS_HOST = os.getenv("TTS_HOST", SERVER)
+TTS_PORT = int(os.getenv("TTS_PORT", "10200"))
 
 SAMPLE_RATE = 16000
 CHANNELS = 1
@@ -73,7 +83,7 @@ async def detect_wake_word():
                         print(f"[wake] detected: {Detection.from_event(event).name}")
                         detected.set()
                         return
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     continue
 
         with sd.InputStream(
@@ -209,7 +219,7 @@ async def speak(text: str):
                 wf.setsampwidth(width)
                 wf.setframerate(sample_rate)
                 wf.writeframes(b"".join(pcm_chunks))
-            os.system(f"aplay -q {f.name}")
+            _play(f.name)
             os.unlink(f.name)
 
 
@@ -230,12 +240,12 @@ async def speak_short(name: str):
     """Optional ding sound. Skips if wav doesn't exist."""
     path = Path(__file__).parent / f"{name}.wav"
     if path.exists():
-        os.system(f"aplay -q {path}")
+        _play(str(path))
 
 
 async def main_loop():
     print(f"[satellite] Mauricio voice satellite '{SATELLITE_ID}' starting...")
-    print(f"[satellite] backend={BACKEND_URL}, stt={STT_HOST}:{STT_PORT}, tts={TTS_HOST}:{TTS_PORT}")
+    print(f"[satellite] backend={BACKEND_URL}  stt={STT_HOST}:{STT_PORT}  tts={TTS_HOST}:{TTS_PORT}")  # noqa: E501
     while True:
         try:
             in_chat = await voice_chat_followup_pending()

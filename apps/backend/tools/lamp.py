@@ -6,14 +6,13 @@ from kasa import Credentials, Discover
 from ..core.config import settings
 from .base import ToolSpec
 
-LAMP_HOST = "192.168.1.26"
 logger = logging.getLogger(__name__)
 
 
-async def _connect(creds: Credentials, max_attempts: int = 3):
+async def _connect(creds: Credentials, host: str, max_attempts: int = 3):
     for attempt in range(max_attempts):
         try:
-            return await Discover.discover_single(LAMP_HOST, credentials=creds)
+            return await Discover.discover_single(host, credentials=creds)
         except Exception as e:
             if attempt == max_attempts - 1:
                 raise
@@ -45,8 +44,10 @@ class LampTool:
 
     async def run(self, args: dict, ctx: dict) -> dict:
         action = args["action"]
+        if not settings.lamp_host:
+            return {"error": "lamp not configured (LAMP_HOST missing)"}
         creds = Credentials(username=settings.kasa_username, password=settings.kasa_password)
-        lamp = await _connect(creds)
+        lamp = await _connect(creds, host=settings.lamp_host)
         try:
             await lamp.update()
             if action == "status":
