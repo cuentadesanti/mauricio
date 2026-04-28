@@ -38,6 +38,7 @@ services:
       - ./apps/backend:/app/apps/backend
       - ./infra:/app/infra
       - ./knowledge:/app/knowledge
+      - ./prompts:/app/prompts
     command: >
       sh -c "alembic -c infra/alembic.ini upgrade head &&
              uvicorn apps.backend.main:app --host 0.0.0.0 --port 8000 --reload"

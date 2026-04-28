@@ -48,6 +48,9 @@ class Settings(BaseSettings):
     evolution_instance: str = "mauricio"
     evolution_webhook_token: str | None = None  # optional webhook auth
 
+    # Phase 5 — Self-improvement loop
+    repo_root: str | None = None      # absolute path to repo root, e.g. /app or /home/santi/mauricio
+    github_repo: str | None = None    # e.g. cuentadesanti/mauricio
 
 
 settings = Settings()

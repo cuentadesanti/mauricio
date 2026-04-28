@@ -10,6 +10,7 @@ RUN pip install --no-cache-dir uv && \
 # Now copy application code (changes here don't bust the pip cache)
 COPY apps ./apps
 COPY infra ./infra
+COPY prompts ./prompts
 
 ENV PYTHONUNBUFFERED=1
 EXPOSE 8000

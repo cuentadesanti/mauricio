@@ -1,5 +1,5 @@
+from backend.domain.knowledge import Chunk, Document
 from backend.domain.memory import Memory
-from backend.domain.knowledge import Document, Chunk
 
 
 def test_memory_model():

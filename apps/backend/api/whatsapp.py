@@ -8,6 +8,7 @@ from ..adapters.whatsapp_evolution import (
     send_whatsapp_text,
 )
 from ..core.config import settings
+from ..core.prompts import load_prompt
 from ..db.session import SessionLocal
 from ..domain.chat import ChatMode
 from ..gateways.litellm_gateway import LiteLLMGateway
@@ -15,18 +16,6 @@ from ..services.chat_service import ChatService
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-
-WHATSAPP_SYSTEM_PROMPT = """You are Mauricio, a personal AI assistant.
-The user is talking to you via WhatsApp.
-
-Style — caveman-terse:
-- 1–3 lines max unless the user asks for detail.
-- Plain text only. No markdown (no **, no #, no bullets).
-- No filler, no hedging. Direct.
-- Match the user's language and informality.
-
-You have access to the user's full memory and knowledge base.
-"""
 
 
 def _verify_webhook_token(request: Request) -> None:
@@ -74,7 +63,7 @@ async def _process_inbound(*, chat_jid: str, text: str, message_id: str) -> None
         async with SessionLocal() as session:
             chat_svc = ChatService(gateway=LiteLLMGateway())
             messages = [
-                {"role": "system", "content": WHATSAPP_SYSTEM_PROMPT},
+                {"role": "system", "content": load_prompt("whatsapp")},
                 {"role": "user", "content": text},
             ]
             chunks: list[str] = []

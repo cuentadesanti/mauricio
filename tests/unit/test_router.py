@@ -1,5 +1,5 @@
-from backend.services.router import pick_model
 from backend.core.config import settings
+from backend.services.router import pick_model
 
 
 def test_short_simple_uses_default():

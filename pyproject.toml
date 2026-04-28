@@ -19,6 +19,7 @@ dependencies = [
     "pgvector>=0.3.6",
     "tiktoken>=0.8.0",
     "boto3>=1.35.0",
+    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
@@ -40,6 +41,7 @@ include = ["backend*"]
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+exclude = [".claude"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 [tool.ruff.lint.per-file-ignores]
@@ -49,6 +51,11 @@ select = ["E", "F", "I", "UP", "B"]
 "apps/backend/services/voice_orchestrator.py" = ["E501"]
 "apps/backend/tools/end_voice_chat.py" = ["E501"]
 "apps/backend/services/knowledge_service.py" = ["B905"]
+"apps/backend/services/feature_request_service.py" = ["E501"]
+"apps/backend/services/improvement_orchestrator.py" = ["E501"]
+"apps/backend/core/config.py" = ["E501"]
+"apps/backend/tools/propose_new_tool.py" = ["E501"]
+"tests/unit/test_memory_extractor.py" = ["E501"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

@@ -1,5 +1,4 @@
-import tempfile
-from pathlib import Path
+from datetime import UTC
 from unittest.mock import AsyncMock, patch
 
 
@@ -180,8 +179,9 @@ async def test_memory_list_no_user_returns_error():
 
 
 async def test_memory_list_returns_memories():
+    from datetime import datetime
     from unittest.mock import MagicMock
-    from datetime import datetime, timezone
+
     from backend.tools.memory_list import MemoryListTool
 
     tool = MemoryListTool()
@@ -190,7 +190,7 @@ async def test_memory_list_returns_memories():
     mock_repo = AsyncMock()
     mock_mem = MagicMock(
         kind="fact", content="user lives in Madrid",
-        valid_from=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        valid_from=datetime(2025, 1, 1, tzinfo=UTC),
     )
     mock_repo.list_active_memories.return_value = [mock_mem]
 
@@ -217,8 +217,9 @@ async def test_chat_search_no_user_returns_error():
 
 
 async def test_chat_search_returns_matches():
+    from datetime import datetime
     from unittest.mock import MagicMock
-    from datetime import datetime, timezone
+
     from backend.tools.chat_search import ChatSearchTool
 
     tool = ChatSearchTool()
@@ -228,7 +229,7 @@ async def test_chat_search_returns_matches():
     mock_msg = MagicMock(
         role="user",
         content={"text": "let's talk about Python"},
-        created_at=datetime(2025, 6, 1, tzinfo=timezone.utc),
+        created_at=datetime(2025, 6, 1, tzinfo=UTC),
     )
     mock_repo.search_messages.return_value = [(mock_msg, "chat-abc")]
 
@@ -244,3 +245,76 @@ async def test_chat_search_returns_matches():
     assert result["count"] == 1
     assert "Python" in result["matches"][0]["text"]
     mock_repo.search_messages.assert_called_once_with("u1", "Python", limit=5)
+
+
+# ---------------------------------------------------------------------------
+# propose_new_tool
+# ---------------------------------------------------------------------------
+
+async def test_propose_new_tool_returns_ok_and_calls_feature_request_service():
+    """propose_new_tool should log the event, fire FeatureRequestService, and return ok=True."""
+    from unittest.mock import AsyncMock, patch
+
+    from backend.tools.propose_new_tool import ProposeNewToolTool
+
+    mock_session = AsyncMock()
+    mock_repo = AsyncMock()
+
+    with (
+        patch("backend.tools.propose_new_tool.SessionLocal", return_value=mock_session),
+        patch("backend.tools.propose_new_tool.Repository", return_value=mock_repo),
+        patch("backend.tools.propose_new_tool.asyncio.create_task") as mock_create_task,
+        patch(
+            "backend.services.feature_request_service.FeatureRequestService.handle_request",
+            new_callable=AsyncMock,
+        ),
+    ):
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+
+        tool = ProposeNewToolTool()
+        result = await tool.run(
+            {
+                "title": "send_sms",
+                "summary": "Send an SMS via Twilio",
+                "use_cases": ["send a reminder", "alert me"],
+                "external_apis": ["Twilio"],
+            },
+            ctx={"user_id": "u1", "chat_id": "c1"},
+        )
+
+    assert result["ok"] is True
+    assert "request_id" in result
+    mock_repo.log_event.assert_called_once()
+    logged_topic = mock_repo.log_event.call_args[0][0]
+    assert logged_topic == "feature_request.received"
+    # asyncio.create_task should have been called to dispatch triage async
+    mock_create_task.assert_called_once()
+
+
+async def test_propose_new_tool_minimal_args():
+    """propose_new_tool should work with only required args (no external_apis)."""
+    from unittest.mock import AsyncMock, patch
+
+    from backend.tools.propose_new_tool import ProposeNewToolTool
+
+    mock_session = AsyncMock()
+    mock_repo = AsyncMock()
+
+    with (
+        patch("backend.tools.propose_new_tool.SessionLocal", return_value=mock_session),
+        patch("backend.tools.propose_new_tool.Repository", return_value=mock_repo),
+        patch("backend.tools.propose_new_tool.asyncio.create_task"),
+    ):
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+
+        tool = ProposeNewToolTool()
+        result = await tool.run(
+            {"title": "calculator", "summary": "Basic math", "use_cases": ["add numbers"]},
+            ctx={},
+        )
+
+    assert result["ok"] is True
+    assert "request_id" in result
+    assert "say" in result

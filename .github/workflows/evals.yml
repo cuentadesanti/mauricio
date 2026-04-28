@@ -1,0 +1,93 @@
+name: evals
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  evals:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: ai
+          POSTGRES_PASSWORD: ai
+          POSTGRES_DB: personalai
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U ai"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql+asyncpg://ai:ai@localhost:5432/personalai
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+      LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
+      BACKEND_API_KEY: ci-test-key
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: install dependencies
+        run: |
+          pip install uv
+          uv pip install --system -e ".[dev]"
+
+      - name: run migrations
+        run: alembic -c infra/alembic.ini upgrade head
+
+      - name: run evals
+        run: python -m apps.backend.eval.runner
+
+      - name: upload eval report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-report
+          path: eval-report.json
+
+      - name: comment eval results on PR
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let body;
+            try {
+              const report = JSON.parse(fs.readFileSync('eval-report.json', 'utf8'));
+              const status = report.passed === report.total ? '✅' : '⚠️';
+              const failures = report.results
+                .filter(r => !r.passed)
+                .map(r => `- ❌ \`${r.suite}/${r.case_id}\`: ${r.reason}`)
+                .join('\n');
+              body = `${status} **Evals: ${report.passed}/${report.total} passed**\n\n` +
+                (failures || '_All passing._');
+            } catch (e) {
+              body = '⚠️ Could not parse eval-report.json';
+            }
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });
+
+      - name: fail if evals regressed
+        if: always()
+        run: |
+          python - <<'EOF'
+          import json, sys
+          report = json.load(open("eval-report.json"))
+          if report["passed"] < report["total"]:
+              print(f"REGRESSION: {report['failed']} eval(s) failed")
+              sys.exit(1)
+          EOF

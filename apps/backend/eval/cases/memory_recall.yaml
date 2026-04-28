@@ -1,0 +1,68 @@
+suite: memory_recall
+cases:
+  - id: peanut_allergy
+    description: "Recall a stated allergy across chat boundaries"
+    setup:
+      - chat: 1
+        messages:
+          - role: user
+            content: "Por cierto, soy alérgico al maní"
+    test:
+      chat: 2
+      messages:
+        - role: user
+          content: "¿Hay algo que deba evitar comer?"
+    expected:
+      must_mention: ["maní"]
+      must_not_mention: ["no sé", "no tengo información"]
+
+  - id: city_change_supersession
+    description: "When user moves cities, old fact should be superseded"
+    setup:
+      - chat: 1
+        messages:
+          - role: user
+            content: "Vivo en Madrid"
+      - chat: 2
+        messages:
+          - role: user
+            content: "Acabo de mudarme a Lisboa"
+    test:
+      chat: 3
+      messages:
+        - role: user
+          content: "¿Dónde vivo?"
+    expected:
+      must_mention: ["Lisboa"]
+      must_not_mention: ["Madrid"]
+
+  - id: name_recall
+    description: "Remember user's name when stated explicitly"
+    setup:
+      - chat: 1
+        messages:
+          - role: user
+            content: "Me llamo Santiago"
+    test:
+      chat: 2
+      messages:
+        - role: user
+          content: "¿Cómo me llamo?"
+    expected:
+      must_mention: ["Santiago"]
+
+  - id: job_recall
+    description: "Remember user's job when stated"
+    setup:
+      - chat: 1
+        messages:
+          - role: user
+            content: "Trabajo como ingeniero de software en una startup de Madrid"
+    test:
+      chat: 2
+      messages:
+        - role: user
+          content: "¿En qué trabajo?"
+    expected:
+      must_mention: ["ingeniero", "software"]
+      must_not_mention: ["no sé", "no tengo información"]

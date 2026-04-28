@@ -1,21 +1,10 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.config import settings
+from ..core.prompts import load_prompt
 from ..db.repository import Repository
 from ..domain.model_gateway import CompletionRequest
 from ..gateways.litellm_gateway import LiteLLMGateway
-
-SUMMARY_PROMPT = """You compact a long conversation into a concise summary.
-
-Goal: capture WHO did/said WHAT and any DECISIONS, OPEN QUESTIONS, and PERSISTENT FACTS that may matter for future turns.
-
-Constraints:
-- Max ~400 words.
-- Use bullet points or short sentences.
-- Skip greetings, filler, repetitive content.
-- If a previous summary is provided, integrate it; do not duplicate.
-- Output ONLY the summary text. No headers, no preamble.
-"""
 
 # Política: si tenemos > THRESHOLD mensajes y el summary actual está más de DRIFT mensajes atrás,
 # regeneramos cubriendo hasta -KEEP_RAW.
@@ -57,7 +46,7 @@ class Summarizer:
 
         req = CompletionRequest(
             messages=[
-                {"role": "system", "content": SUMMARY_PROMPT},
+                {"role": "system", "content": load_prompt("summarization")},
                 {
                     "role": "user",
                     "content": (

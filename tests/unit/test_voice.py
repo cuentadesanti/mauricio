@@ -3,12 +3,10 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from backend.services.voice_orchestrator import (
     VoiceOrchestrator,
     _extract_text_from_sse,
 )
-
 
 # ---- SSE text extraction ----
 

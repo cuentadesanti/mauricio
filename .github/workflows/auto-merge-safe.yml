@@ -1,0 +1,21 @@
+name: auto-merge-safe
+
+# Auto-merges PRs labeled 'safe-auto-merge' once all checks pass.
+# Policy: only prompts/ and eval/cases/ changes qualify for this label.
+# Tool code (auto-generated) gets 'auto-generated' label, NOT this one.
+
+on:
+  pull_request:
+    types: [labeled, synchronize]
+    branches: [main]
+
+jobs:
+  auto-merge:
+    if: contains(github.event.pull_request.labels.*.name, 'safe-auto-merge')
+    runs-on: ubuntu-latest
+    steps:
+      - name: enable auto-merge (squash)
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,6 +1,9 @@
+import asyncio
 from typing import Annotated
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -41,6 +44,34 @@ async def expire_memory(
     await repo.expire_memory(memory_id)
     await session.commit()
     return {"ok": True, "id": memory_id, "content": m.content}
+
+
+class FeatureRequestBody(BaseModel):
+    title: str
+    summary: str
+    use_cases: list[str] = []
+    external_apis: list[str] = []
+    source: str = "api"
+    request_id: str | None = None
+
+
+@router.post("/admin/feature-request", dependencies=[Depends(verify_api_key)])
+async def admin_feature_request(body: FeatureRequestBody):
+    """Trigger feasibility triage + optional auto-PR for a new tool request."""
+    from ..services.feature_request_service import FeatureRequestService
+
+    request_id = body.request_id or str(uuid4())
+    service = FeatureRequestService()
+    asyncio.create_task(
+        service.handle_request(
+            request_id=request_id,
+            title=body.title,
+            summary=body.summary,
+            use_cases=body.use_cases,
+            external_apis=body.external_apis,
+        )
+    )
+    return {"ok": True, "request_id": request_id}
 
 
 @router.get("/admin/memory-list", dependencies=[Depends(verify_api_key)])

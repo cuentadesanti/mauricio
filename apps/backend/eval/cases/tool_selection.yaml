@@ -1,0 +1,38 @@
+suite: tool_selection
+cases:
+  - id: time_query
+    description: "Should call time_now for time queries"
+    test:
+      messages:
+        - role: user
+          content: "¿Qué hora es?"
+    expected:
+      tool_called: "time_now"
+
+  - id: lamp_on
+    description: "Should call lamp tool to turn on"
+    test:
+      messages:
+        - role: user
+          content: "Enciende la lámpara"
+    expected:
+      tool_called: "lamp"
+      tool_args_contains: {"action": "on"}
+
+  - id: web_search_query
+    description: "Should call web_search for current events"
+    test:
+      messages:
+        - role: user
+          content: "¿Cuál es el precio actual del bitcoin?"
+    expected:
+      tool_called: "web_search"
+
+  - id: note_add
+    description: "Should call note_add when user asks to save a note"
+    test:
+      messages:
+        - role: user
+          content: "Apunta: comprar leche mañana"
+    expected:
+      tool_called: "note_add"

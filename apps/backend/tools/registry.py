@@ -8,6 +8,7 @@ from .memory_list import MemoryListTool
 from .note_add import NoteAddTool
 from .note_list import NoteListTool
 from .note_read import NoteReadTool
+from .propose_new_tool import ProposeNewToolTool
 from .start_voice_chat import StartVoiceChatTool
 from .time_now import TimeNowTool
 from .web_search import WebSearchTool
@@ -24,11 +25,14 @@ def build_registry() -> dict[str, Tool]:
         "chat_search": ChatSearchTool(),
         "start_voice_chat": StartVoiceChatTool(),
         "end_voice_chat": EndVoiceChatTool(),
+        "propose_new_tool": ProposeNewToolTool(),
     }
     if settings.tavily_api_key:
         tools["web_search"] = WebSearchTool()
     if settings.kasa_username and settings.kasa_password and settings.lamp_host:
         tools["lamp"] = LampTool()
+    if settings.repo_root and settings.github_repo:
+        tools["propose_new_tool"] = ProposeNewToolTool()
     return tools
 
 

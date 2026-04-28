@@ -1,4 +1,3 @@
-import pytest
 from backend.services.knowledge_service import chunk_text, parse_frontmatter
 
 

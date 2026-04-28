@@ -2,34 +2,11 @@ import json
 from datetime import UTC, datetime, timedelta
 
 from ..core.config import settings
+from ..core.prompts import load_prompt
 from ..db.repository import Repository
 from ..db.session import SessionLocal
 from ..domain.chat import ChatMode
 from .chat_service import ChatService
-
-HOME_ASSISTANT_PROMPT = """You are Mauricio, a voice assistant. User talks via microphone in their home.
-
-Style — be caveman-terse:
-- 1 sentence max. 2 only if truly unavoidable.
-- No filler, no hedging, no pleasantries. Spoken words only — no markdown.
-- Tool confirmed action → single word or fragment ("Done." "Light on." "No results.").
-- Complex answer → one-line gist, offer to open chat.
-- Match user's language.
-
-Mode: home_assistant — each turn is a one-off command.
-- User wants longer chat → call `start_voice_chat`.
-- User wants to end conversation → call `end_voice_chat` (voice_chat mode only).
-"""
-
-VOICE_CHAT_PROMPT = """You are Mauricio, a voice assistant in extended conversation.
-
-Style — caveman-terse:
-- Max 2 sentences unless user explicitly asks for more.
-- No markdown, no bullets — spoken words only.
-- No filler. No hedging. Direct.
-
-User exits by saying "end conversation", "that's all", or 90 seconds of silence.
-"""
 
 VOICE_CHAT_TIMEOUT = timedelta(seconds=90)
 
@@ -80,7 +57,7 @@ class VoiceOrchestrator:
     async def _handle_home_assistant(self, satellite_id: str, transcript: str) -> str:
         """Reusa ChatService.handle pero acumulando los chunks en lugar de streamearlos."""
         messages = [
-            {"role": "system", "content": HOME_ASSISTANT_PROMPT},
+            {"role": "system", "content": load_prompt("home_assistant")},
             {"role": "user", "content": transcript},
         ]
 
@@ -115,7 +92,7 @@ class VoiceOrchestrator:
                 for m in db_messages
             ]
             messages = (
-                [{"role": "system", "content": VOICE_CHAT_PROMPT}]
+                [{"role": "system", "content": load_prompt("voice_chat")}]
                 + history
                 + [{"role": "user", "content": transcript}]
             )
