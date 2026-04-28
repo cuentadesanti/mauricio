@@ -17,3 +17,6 @@ node_modules/
 # notas personales generadas por el asistente — no van al repo
 knowledge/*
 !knowledge/.gitkeep
+
+# Claude Code local state
+.claude/
