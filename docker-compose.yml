@@ -71,18 +71,21 @@ services:
         condition: service_started
 
   whisper:
-    image: rhasspy/wyoming-whisper:latest
+    image: rhasspy/wyoming-faster-whisper:latest
     command:
       - --model
-      - medium
+      - small
       - --language
       - es
+      - --compute-type
+      - int8
       - --beam-size
       - "1"
     ports:
       - "10300:10300"
     volumes:
       - whisper_data:/data
+    mem_limit: 2g
     restart: unless-stopped
 
   piper:
@@ -100,9 +103,9 @@ services:
     image: rhasspy/wyoming-openwakeword:latest
     command:
       - --preload-model
-      - ok_nabu
+      - okay_nabu
       - --threshold
-      - "0.5"
+      - "0.1"
     ports:
       - "10400:10400"
     restart: unless-stopped

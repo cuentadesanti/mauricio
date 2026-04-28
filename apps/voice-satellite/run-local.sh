@@ -32,4 +32,9 @@ echo "[run-local] wake=localhost:10400  stt=localhost:10300  tts=localhost:10200
 echo "[run-local] Make sure 'docker compose up -d whisper piper openwakeword' is running."
 echo ""
 
-uv run python satellite.py
+VENV="$(dirname "$0")/venv"
+if [[ -f "$VENV/bin/python" ]]; then
+  "$VENV/bin/python" satellite.py
+else
+  uv run python satellite.py
+fi
