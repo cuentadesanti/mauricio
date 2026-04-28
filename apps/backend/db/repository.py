@@ -53,10 +53,35 @@ class Repository:
         )
         return res.scalar_one_or_none()
 
+    async def find_chat_by_external_id(
+        self, user_id: str, channel: str, external_id: str
+    ) -> Chat | None:
+        res = await self.s.execute(
+            select(Chat)
+            .where(
+                Chat.user_id == user_id,
+                Chat.channel == channel,
+                Chat.external_id == external_id,
+            )
+            .limit(1)
+        )
+        return res.scalar_one_or_none()
+
     async def create_chat(
-        self, user_id: str, channel: str, mode: str, signature: str | None = None
+        self,
+        user_id: str,
+        channel: str,
+        mode: str,
+        signature: str | None = None,
+        external_id: str | None = None,
     ) -> Chat:
-        chat = Chat(user_id=user_id, channel=channel, mode=mode, signature=signature)
+        chat = Chat(
+            user_id=user_id,
+            channel=channel,
+            mode=mode,
+            signature=signature,
+            external_id=external_id,
+        )
         self.s.add(chat)
         await self.s.flush()
         return chat

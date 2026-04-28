@@ -110,13 +110,27 @@ class ChatService:
             return
 
         # ---- PERSISTENT con retrieval híbrido ----
-        # CR-1: si el caller fuerza un chat_id (voice_chat), usarlo directamente
-        force_chat_id = (ctx_extra or {}).get("force_chat_id")
+        ctx_extra = ctx_extra or {}
+        force_chat_id = ctx_extra.get("force_chat_id")
+        external_id = ctx_extra.get("external_id")
 
         if force_chat_id:
             chat = await repo.get_chat(force_chat_id)
             if not chat:
                 raise ValueError(f"force_chat_id {force_chat_id} not found")
+            new_user_msg = incoming_messages[-1]
+            await repo.add_message(
+                chat.id,
+                role=new_user_msg["role"],
+                content={"text": new_user_msg.get("content", "")},
+            )
+        elif external_id:
+            # whatsapp / external channel: chat eterno por contacto
+            chat = await repo.find_chat_by_external_id(user.id, channel, external_id)
+            if not chat:
+                chat = await repo.create_chat(
+                    user.id, channel=channel, mode=mode.value, external_id=external_id
+                )
             new_user_msg = incoming_messages[-1]
             await repo.add_message(
                 chat.id,
@@ -157,11 +171,16 @@ class ChatService:
             memories_task, chunks_task, summary_task
         )
 
-        system_msg = self._build_system_prompt(memories, chunks, summary)
+        # extract optional channel-specific system prompt (voice_chat, whatsapp, etc.)
+        base_system = ""
+        if incoming_messages and incoming_messages[0]["role"] == "system":
+            base_system = incoming_messages[0].get("content", "")
 
-        raw_msgs = (
-            incoming_messages[-10:] if summary else incoming_messages[-RECENT_MESSAGES_WINDOW:]
-        )
+        system_msg = self._build_system_prompt(memories, chunks, summary, base_system=base_system)
+
+        # filter system messages from raw_msgs to avoid duplication
+        window = 10 if summary else RECENT_MESSAGES_WINDOW
+        raw_msgs = [m for m in incoming_messages[-window:] if m.get("role") != "system"]
         context = [{"role": "system", "content": system_msg}, *raw_msgs]
 
         result = await self._collect_response(
@@ -171,8 +190,8 @@ class ChatService:
         async for sse in _fake_stream(result.text, result.model):
             yield sse
 
-        # CR-1: solo actualizar firma si no es force_chat_id (voz no tiene firma)
-        if not force_chat_id:
+        # only update signature for web channel (external_id and force_chat_id don't use it)
+        if not force_chat_id and not external_id:
             full_history = incoming_messages + [{"role": "assistant", "content": result.text}]
             new_signature = hash_messages(full_history)
             await repo.update_chat_signature(chat, new_signature)
@@ -277,8 +296,9 @@ class ChatService:
             return " ".join(p.get("text", "") for p in c if isinstance(p, dict))
         return ""
 
-    def _build_system_prompt(self, memories, chunks, summary) -> str:
-        parts = ["You are a personal AI assistant. Be concise, accurate, and helpful."]
+    def _build_system_prompt(self, memories, chunks, summary, base_system: str = "") -> str:
+        default = "You are a personal AI assistant. Be concise, accurate, and helpful."
+        parts = [base_system if base_system else default]
 
         if memories:
             mem_lines = "\n".join(f"- ({k}) {c}" for k, c, _ in memories)

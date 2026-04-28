@@ -39,6 +39,7 @@ class Chat(Base):
     channel: Mapped[str] = mapped_column(String)
     mode: Mapped[str] = mapped_column(String, default="persistent")
     signature: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    external_id: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -48,7 +49,10 @@ class Chat(Base):
         back_populates="chat", cascade="all, delete-orphan"
     )
 
-    __table_args__ = (Index("ix_chats_user_updated", "user_id", "updated_at"),)
+    __table_args__ = (
+        Index("ix_chats_user_updated", "user_id", "updated_at"),
+        Index("ix_chats_channel_external_id", "channel", "external_id"),
+    )
 
 
 class Message(Base):

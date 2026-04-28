@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from .api import admin, chat, health, voice
+from .api import admin, chat, health, voice, whatsapp
 from .core.config import settings
 from .db.repository import Repository
 from .db.session import SessionLocal
@@ -30,3 +30,4 @@ app.include_router(health.router)
 app.include_router(chat.router, prefix="/v1")
 app.include_router(admin.router)
 app.include_router(voice.router)
+app.include_router(whatsapp.router)

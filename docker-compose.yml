@@ -110,6 +110,31 @@ services:
       - "10400:10400"
     restart: unless-stopped
 
+  evolution:
+    image: atendai/evolution-api:v2.1.1
+    environment:
+      AUTHENTICATION_API_KEY: "${EVOLUTION_API_KEY}"
+      DATABASE_ENABLED: "true"
+      DATABASE_PROVIDER: "postgresql"
+      DATABASE_CONNECTION_URI: "postgresql://ai:ai@postgres:5432/evolution"
+      DATABASE_CONNECTION_CLIENT_NAME: "evolution"
+      CACHE_REDIS_ENABLED: "false"
+      CACHE_LOCAL_ENABLED: "true"
+      WEBHOOK_GLOBAL_URL: "http://backend:8000/v1/whatsapp/webhook"
+      WEBHOOK_GLOBAL_ENABLED: "true"
+      WEBHOOK_EVENTS_MESSAGES_UPSERT: "true"
+      CONFIG_SESSION_PHONE_CLIENT: "Mauricio"
+      LANGUAGE: "es"
+      DEL_INSTANCE: "false"
+    ports:
+      - "8080:8080"
+    volumes:
+      - evolution_instances:/evolution/instances
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   pg_data:
   mqtt_data:
@@ -117,3 +142,4 @@ volumes:
   meili_data:
   whisper_data:
   piper_data:
+  evolution_instances:

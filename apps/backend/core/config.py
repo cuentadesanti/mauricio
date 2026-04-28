@@ -42,6 +42,12 @@ class Settings(BaseSettings):
     chunk_size_chars: int = 1500  # ~ 350-400 tokens
     chunk_overlap_chars: int = 200
 
+    # Phase 4 — WhatsApp (Evolution API)
+    evolution_api_url: str | None = None       # e.g. http://evolution:8080
+    evolution_api_key: str | None = None
+    evolution_instance: str = "mauricio"
+    evolution_webhook_token: str | None = None  # optional webhook auth
+
 
 
 settings = Settings()
