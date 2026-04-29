@@ -72,7 +72,7 @@ services:
         condition: service_started
 
   whisper:
-    image: rhasspy/wyoming-faster-whisper:latest
+    image: rhasspy/wyoming-whisper:latest
     command:
       - --model
       - small
