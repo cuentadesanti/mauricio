@@ -8,6 +8,7 @@ Type=simple
 User=%i
 WorkingDirectory=/home/%i/mauricio-satellite
 EnvironmentFile=/home/%i/mauricio-satellite/.env
+Environment=PYTHONUNBUFFERED=1
 ExecStart=/home/%i/mauricio-satellite/venv/bin/python satellite.py
 Restart=on-failure
 RestartSec=5
