@@ -54,6 +54,13 @@ SAMPLE_RATE = 16000
 CHANNELS = 1
 DTYPE = "int16"
 
+# Set AUDIO_DEVICE to an int index or ALSA device name (e.g. "hw:2,0")
+# Leave unset to use the system default.
+_dev_env = os.getenv("AUDIO_DEVICE")
+AUDIO_DEVICE: int | str | None = (
+    int(_dev_env) if _dev_env and _dev_env.lstrip("-").isdigit() else _dev_env or None
+)
+
 VAD_SILENCE_MS = 800  # ms of silence to stop recording
 MAX_RECORD_S = 12  # hard cutoff
 RMS_SILENCE_THRESHOLD = 350  # tune empirically with your mic
@@ -92,6 +99,7 @@ async def detect_wake_word():
             dtype=DTYPE,
             callback=callback,
             blocksize=1024,
+            device=AUDIO_DEVICE,
         ):
             reader_task = asyncio.create_task(reader())
             try:
@@ -122,6 +130,7 @@ def record_until_silence() -> bytes:
         channels=CHANNELS,
         dtype=DTYPE,
         blocksize=chunk_samples,
+        device=AUDIO_DEVICE,
     ) as stream:
         speech_started = False
         while True:
