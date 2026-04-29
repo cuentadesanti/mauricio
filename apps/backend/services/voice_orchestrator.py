@@ -36,11 +36,13 @@ async def stream_voice_turn(*, satellite_id: str, transcript: str, chat_service:
         chunks = await chat_service.knowledge.search(session, user.id, last_user_text, k=3)
 
         base_system = load_prompt("home_assistant")
-        enriched_system = chat_service._build_voice_system_prompt(
+        # Anthropic prompt caching: base prompt is cacheable (same every turn),
+        # time/memories/knowledge are dynamic and not cached.
+        system_blocks = chat_service.build_voice_system_blocks(
             base_system=base_system, memories=memories, chunks=chunks
         )
         context = [
-            {"role": "system", "content": enriched_system},
+            {"role": "system", "content": system_blocks},
             {"role": "user", "content": transcript},
         ]
 

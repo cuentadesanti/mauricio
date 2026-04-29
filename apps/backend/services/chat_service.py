@@ -436,6 +436,33 @@ class ChatService:
             )
         return "\n\n".join(parts)
 
+    def build_voice_system_blocks(self, base_system: str, memories, chunks) -> list[dict]:
+        """Returns content blocks for a voice system message with Anthropic
+        prompt caching. The base prompt (home_assistant.md / voice_chat.md) is
+        the cacheable prefix — same across turns. The dynamic suffix (time +
+        memories + knowledge) is not cached because it changes per turn."""
+        blocks: list[dict] = []
+        if base_system:
+            blocks.append({
+                "type": "text",
+                "text": base_system,
+                "cache_control": {"type": "ephemeral"},
+            })
+        dyn_parts = [self._now_block()]
+        if memories:
+            mem_lines = "\n".join(f"- ({k}) {c}" for k, c, _ in memories)
+            dyn_parts.append(f"## What I know about the user\n{mem_lines}")
+        if chunks:
+            chunk_lines = []
+            for title, content, _doc_id, _score in chunks:
+                chunk_lines.append(f"### From {title}\n{content[:400]}")
+            dyn_parts.append(
+                "## Relevant from knowledge base\n" + "\n\n".join(chunk_lines)
+            )
+        if dyn_parts:
+            blocks.append({"type": "text", "text": "\n\n".join(dyn_parts)})
+        return blocks
+
     async def _post_turn_jobs(
         self,
         *,
