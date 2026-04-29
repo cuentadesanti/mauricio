@@ -1,0 +1,18 @@
+[Unit]
+Description=Mauricio Voice Satellite
+After=network.target sound.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=%i
+WorkingDirectory=/home/%i/mauricio-satellite
+EnvironmentFile=/home/%i/mauricio-satellite/.env
+ExecStart=/home/%i/mauricio-satellite/venv/bin/python satellite.py
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -1,7 +1,7 @@
 <p align="center">
-  <h1 align="center">🧠 Mauricio — Personal AI Backend</h1>
+  <h1 align="center">Mauricio — Personal AI Backend</h1>
   <p align="center">
-    A self-hosted, memory-aware AI assistant with persistent conversations, semantic knowledge retrieval, and smart home control.
+    A self-hosted, memory-aware AI assistant with persistent conversations, semantic knowledge retrieval, voice control, WhatsApp, and a self-improvement loop.
   </p>
 </p>
 
@@ -9,48 +9,50 @@
 
 ## What is this?
 
-Mauricio is a **personal AI backend** that sits behind [LibreChat](https://github.com/danny-avila/LibreChat) and turns it into a long-term-memory assistant that *knows you*. It remembers facts about your life, retrieves information from your personal notes, summarizes long conversations, and can control your smart home — all while routing queries to the cheapest model that can handle them.
+Mauricio is a **personal AI backend** that connects to [LibreChat](https://github.com/danny-avila/LibreChat), a voice satellite (Raspberry Pi), and WhatsApp — all sharing the same memory and knowledge base. It remembers facts about your life, retrieves your personal notes semantically, summarizes long chats, controls your smart home, and can propose and implement its own new capabilities via pull requests.
 
-### Key Features
+### Features
 
 | Feature | Description |
 | :--- | :--- |
-| 🗂 **Persistent Conversations** | Chats are stored in PostgreSQL. Pick up where you left off across sessions. |
-| 🧠 **Long-term Memory** | Facts, preferences, and entities are extracted automatically after each turn and recalled in future conversations. |
-| 📚 **Knowledge Base (RAG)** | Your markdown notes in `knowledge/` are chunked, embedded, and searched semantically via pgvector. |
-| 🔄 **Memory Temporality** | Memories can be superseded, expired, and corrected — the system tracks *when* facts became true and what replaced them. |
-| 📝 **Conversation Summarization** | Long chats (>20 messages) are automatically compressed into rolling summaries to save context window space. |
-| 🔀 **Smart Model Routing** | Simple queries go to Claude Haiku (cheap/fast), complex ones to Claude Opus (powerful). Transparent to the user. |
-| 🛠 **Tool Ecosystem** | Web search (Tavily), note-taking, time awareness, memory editing, and smart lamp control — all via function calling. |
-| 📊 **Full Observability** | Every LLM call is traced in [Langfuse](https://langfuse.com) with nested spans for tool loops and background jobs. |
+| **Persistent Conversations** | Chats stored in PostgreSQL. Pick up where you left off across sessions and channels. |
+| **Long-term Memory** | Facts, preferences, and entities extracted after each turn, recalled in future conversations. Memories can be superseded, expired, and corrected with full audit trail. |
+| **Knowledge Base (RAG)** | Markdown notes in `knowledge/` chunked, embedded, and searched via pgvector. |
+| **Conversation Summarization** | Long chats (>20 messages) compressed into rolling summaries automatically. |
+| **Smart Model Routing** | Simple queries → Claude Haiku. Complex queries → Claude Opus. Transparent to the user. |
+| **Tool Ecosystem** | Web search, note-taking, time awareness, memory editing, smart lamp control, and self-improvement. |
+| **Voice Satellite** | Raspberry Pi client: wake word → Whisper STT → backend → Piper TTS. Supports persistent voice chat mode. |
+| **WhatsApp Channel** | Receive and respond to WhatsApp messages via Evolution API. Same memory and tools as web. |
+| **Self-improvement Loop** | Say "add a tool that does X" → feasibility triage → Claude Code implements it in a git worktree → PR opened automatically. |
+| **Eval Framework** | YAML-driven eval cases run on every PR via GitHub Actions. Memory recall, tool selection, and regression detection. |
+| **Full Observability** | Every LLM call traced in Langfuse with nested spans for tool loops and background jobs. |
 
 ---
 
 ## Architecture
 
 ```
-┌──────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│  LibreChat   │────▶│  FastAPI Backend  │────▶│  LLM Providers  │
-│  (Chat UI)   │◀────│  (this repo)     │◀────│  (Anthropic,    │
-│  :3080       │     │  :8000           │     │   OpenAI)       │
-└──────────────┘     └────────┬─────────┘     └─────────────────┘
-                              │
-                    ┌─────────┼──────────┐
-                    ▼         ▼          ▼
-              ┌──────────┐ ┌────────┐ ┌────────┐
-              │ Postgres │ │Langfuse│ │ Tavily │
-              │ pgvector │ │ Cloud  │ │  API   │
-              │  :5432   │ └────────┘ └────────┘
-              └──────────┘
+LibreChat (:3080) ──┐
+Voice Satellite     ├──▶  FastAPI Backend (:8000)  ──▶  LLM Providers
+WhatsApp            ┘          │                        (Anthropic, OpenAI)
+                               │
+              ┌────────────────┼────────────────┐
+              ▼                ▼                ▼
+         PostgreSQL        Langfuse          Evolution API
+         + pgvector          Cloud            (WhatsApp)
 ```
 
-### Request Flow (Persistent Mode)
+**Request flow (persistent mode):**
+1. Parallel retrieval — memories + knowledge chunks + chat summary
+2. System prompt construction — enriched with facts, documents, history
+3. Tool-calling loop — up to 5 LLM → tool → LLM iterations
+4. SSE stream back to client
+5. Background jobs — memory extraction + summarization
 
-1. **Parallel context retrieval** — memories, knowledge chunks, and chat summary fetched simultaneously
-2. **System prompt construction** — dynamic prompt with known facts, relevant documents, and conversation history
-3. **Tool-calling loop** — up to 5 iterations of LLM → tool → LLM
-4. **SSE streaming** — response streamed back to LibreChat
-5. **Background jobs** (fire-and-forget) — memory extraction + summarization run after response is delivered
+**Self-improvement flow:**
+1. User: *"I want a tool that sends SMS"*
+2. `propose_new_tool` fires → triage LLM (viable / clarify / not_viable)
+3. If viable: Claude Code runs in an isolated git worktree, implements the tool, tests pass → PR opened on GitHub
 
 ---
 
@@ -59,19 +61,16 @@ Mauricio is a **personal AI backend** that sits behind [LibreChat](https://githu
 ### Prerequisites
 
 - Docker & Docker Compose
-- API keys for: [Anthropic](https://console.anthropic.com), [OpenAI](https://platform.openai.com) (embeddings), [Tavily](https://tavily.com) (web search)
-- Optional: [Langfuse](https://langfuse.com) account for tracing
+- API keys: [Anthropic](https://console.anthropic.com), [OpenAI](https://platform.openai.com) (embeddings), [Tavily](https://tavily.com) (web search), [Langfuse](https://langfuse.com) (tracing)
 
-### 1. Clone & Configure
+### 1. Clone & configure
 
 ```bash
 git clone https://github.com/cuentadesanti/mauricio.git
 cd mauricio
-
-# Copy and fill in your API keys
 cp .env.example .env
 cp .env.librechat.example .env.librechat
-# Edit both files with your actual keys
+# Fill in your API keys in both files
 ```
 
 ### 2. Launch
@@ -80,94 +79,129 @@ cp .env.librechat.example .env.librechat
 docker compose up -d
 ```
 
-This will:
-- Start PostgreSQL (with pgvector), MongoDB, Meilisearch, and Mosquitto
-- Run Alembic migrations automatically
-- Sync any markdown files in `knowledge/` into the vector database
-- Start the FastAPI backend on `:8000`
-- Start LibreChat on `:3080`
+Runs: PostgreSQL/pgvector, MongoDB, Meilisearch, Mosquitto, FastAPI backend (:8000), LibreChat (:3080), Whisper STT (:10300), Piper TTS (:10200), openWakeWord (:10400).
 
-### 3. Use
+### 3. Open LibreChat
 
-Open **http://localhost:3080**, create an account, and select either:
-- **personal-ai** — persistent mode with full memory and retrieval
-- **personal-ai-quick** — stateless mode, no database interaction
+Go to **http://localhost:3080**, create an account, and pick:
+- **personal-ai** — full mode (memory + retrieval + tools)
+- **personal-ai-quick** — stateless, no DB
 
 ---
 
-## Project Structure
+## Voice Satellite (Raspberry Pi)
+
+The satellite runs on a Pi with a microphone. It connects to the wyoming services on your Mac and the backend.
+
+### One-command deploy from Mac
+
+```bash
+./scripts/deploy-satellite.sh [user@pi-address] [satellite-id]
+
+# Examples:
+./scripts/deploy-satellite.sh                          # pi@raspberrypi.local, id=living-room
+./scripts/deploy-satellite.sh pi@192.168.1.50          # custom IP
+./scripts/deploy-satellite.sh pi@192.168.1.50 bedroom  # custom satellite ID
+```
+
+The script:
+1. Checks SSH connectivity
+2. Installs system deps on the Pi (`portaudio`, `python3`, `uv`)
+3. Syncs `satellite.py`
+4. Creates Python venv and installs requirements
+5. Writes `.env` pointing back to your Mac's IP
+6. Installs and starts a `systemd` service (auto-restart on reboot)
+
+**Requirements:** SSH key-based access to the Pi. Set up with `ssh-copy-id pi@<address>`.
+
+### Manage the service
+
+```bash
+# Logs (live)
+ssh pi@raspberrypi.local journalctl -u mauricio-satellite -f
+
+# Restart / stop
+ssh pi@raspberrypi.local sudo systemctl restart mauricio-satellite
+ssh pi@raspberrypi.local sudo systemctl stop mauricio-satellite
+```
+
+### How it works
 
 ```
-apps/backend/
-├── main.py                     # FastAPI app with lifespan (boot sync)
-├── api/
-│   ├── chat.py                 # /v1/chat/completions, /v1/responses, /v1/models
-│   ├── admin.py                # /admin/sync-knowledge, /admin/memory-list
-│   └── health.py               # /health
-├── core/
-│   └── config.py               # Pydantic Settings (reads .env)
-├── domain/
-│   ├── chat.py                 # ChatMode enum
-│   ├── knowledge.py            # Document, Chunk, KnowledgeStore protocol
-│   ├── memory.py               # Memory, MemoryStore protocol
-│   └── model_gateway.py        # CompletionRequest/Response protocol
-├── db/
-│   ├── models.py               # SQLAlchemy ORM (9 tables)
-│   ├── repository.py           # All DB access including vector queries
-│   └── session.py              # AsyncSession factory
-├── gateways/
-│   ├── litellm_gateway.py      # LLM calls via LiteLLM + Langfuse
-│   └── embeddings_gateway.py   # OpenAI text-embedding-3-small
-├── services/
-│   ├── chat_service.py         # Main orchestrator: retrieval + tools + jobs
-│   ├── knowledge_service.py    # Chunk, embed, and search markdown files
-│   ├── memory_service.py       # Store/retrieve with cosine deduplication
-│   ├── memory_extractor.py     # Background LLM extraction with supersession
-│   ├── summarizer.py           # Rolling conversation compression
-│   └── router.py               # Haiku vs Opus model selection
-└── tools/
-    ├── registry.py             # Tool registry
-    ├── time_now.py             # Current time in any timezone
-    ├── web_search.py           # Tavily web search
-    ├── note_add.py             # Save markdown notes
-    ├── note_list.py / note_read.py  # Browse notes
-    ├── memory_edit.py          # Expire / correct / add memories
-    └── lamp.py                 # Tapo L510 smart lamp control
-
-infra/
-├── alembic.ini
-├── migrations/versions/
-│   ├── 0001_initial.py         # users, chats, messages, events
-│   ├── 0002_memory_and_knowledge.py  # memories, summaries, knowledge
-│   └── 0003_memory_temporality.py    # valid_from/until, supersession
-├── librechat/librechat.yaml
-└── mosquitto/mosquitto.conf
+Wake word ("Okay Nabu") → VAD recording → Whisper STT → POST /v1/voice/turn → Piper TTS → speaker
 ```
+
+Two modes:
+- **home_assistant** (default) — one-off commands. Access memory, knowledge, tools.
+- **voice_chat** — persistent conversation mode. Say *"start a conversation"* to enter, *"end conversation"* to exit (or 90s silence).
 
 ---
 
-## Memory System
+## WhatsApp
 
-The memory system has three layers:
+Mauricio can receive and respond to your own WhatsApp messages via [Evolution API](https://github.com/EvolutionAPI/evolution-api) (Baileys, self-hosted).
 
-### Automatic Extraction
-After each persistent turn, a background job sends the user+assistant exchange (along with all currently active memories) to a cheap LLM. The model outputs structured JSON:
+**Policy (Opción C):** only responds to messages you send — when you write to yourself ("note to self") or to a dedicated Mauricio number. Incoming messages from others are ignored by default.
 
-```json
-{
-  "facts": [{"content": "The user moved to Lisbon", "supersedes": ["mem_abc"]}],
-  "preferences": [{"content": "The user prefers dark mode"}],
-  "expire": ["mem_xyz"]
-}
+### Setup
+
+1. Add to `.env`:
+   ```
+   EVOLUTION_API_URL=http://evolution:8080
+   EVOLUTION_API_KEY=your-key
+   EVOLUTION_INSTANCE=mauricio
+   EVOLUTION_WEBHOOK_TOKEN=a-long-random-token
+   ```
+
+2. Create the Evolution database and start the service:
+   ```bash
+   docker compose exec postgres createdb -U ai evolution
+   docker compose up -d evolution
+   ```
+
+3. Create an instance and scan the QR code:
+   ```bash
+   # Create instance
+   curl -X POST http://localhost:8080/instance/create \
+     -H "apikey: $EVOLUTION_API_KEY" \
+     -H "Content-Type: application/json" \
+     -d '{"instanceName": "mauricio", "qrcode": true, "integration": "WHATSAPP-BAILEYS"}'
+
+   # Get QR (scan from WhatsApp → Settings → Linked Devices)
+   curl http://localhost:8080/instance/connect/mauricio \
+     -H "apikey: $EVOLUTION_API_KEY"
+   ```
+
+4. Verify connection: `{"state": "open"}` means you're live.
+
+---
+
+## Self-improvement Loop
+
+Tell Mauricio through LibreChat:
+
+> *"I want a tool that controls my Spotify"*
+
+It will:
+1. Call `propose_new_tool` with title, summary, and use cases
+2. Triage LLM decides: **viable** / **clarify_needed** / **not_viable**
+3. If viable: Claude Code spins up in a git worktree, implements the tool, runs `pytest`, then opens a PR
+
+**Requirements:** set in `.env`:
+```
+REPO_ROOT=/path/to/mauricio   # local path to this repo
+GITHUB_REPO=cuentadesanti/mauricio
 ```
 
-### Temporal Tracking
-Each memory has `valid_from`, `valid_until`, `superseded_by`, and `confidence` fields. When a fact changes (e.g., the user moves cities), the old memory is expired and linked to its replacement — creating a full audit trail.
+You can also trigger it directly:
+```bash
+curl -X POST http://localhost:8000/admin/feature-request \
+  -H "Authorization: Bearer $BACKEND_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"title": "spotify_play", "summary": "Control Spotify playback", "use_cases": ["play music", "pause", "skip track"]}'
+```
 
-### User Control
-The `memory_edit` tool lets you explicitly tell the AI:
-- *"Forget that I work at Acme Corp"* → expires the memory
-- *"Actually, I moved to Berlin last month"* → creates replacement, expires old
+GitHub Actions watches for issues labeled `feature-request` and dispatches them automatically.
 
 ---
 
@@ -181,13 +215,25 @@ curl -X POST http://localhost:8000/admin/sync-knowledge \
   -H "Authorization: Bearer $BACKEND_API_KEY"
 ```
 
-Files are:
-1. **Parsed** — YAML frontmatter extracted for metadata
-2. **Chunked** — ~1500 characters with 200-char overlap, split at newlines
-3. **Embedded** — OpenAI `text-embedding-3-small` (1536 dimensions)
-4. **Indexed** — pgvector HNSW index for fast cosine similarity search
+Files are parsed (YAML frontmatter), chunked (~1500 chars, 200 overlap), embedded (OpenAI `text-embedding-3-small`), and indexed via pgvector HNSW.
 
-The `note_add` tool lets the AI create notes on your behalf, which are immediately available for retrieval.
+The `note_add` tool lets Mauricio create notes on your behalf.
+
+---
+
+## Prompts
+
+All system prompts live in `prompts/*.md` — plain text, editable without touching code:
+
+| File | Used by |
+| :--- | :--- |
+| `prompts/home_assistant.md` | Voice satellite (home_assistant mode) |
+| `prompts/voice_chat.md` | Voice satellite (voice_chat mode) |
+| `prompts/whatsapp.md` | WhatsApp channel |
+| `prompts/memory_extraction.md` | Background memory extractor |
+| `prompts/summarization.md` | Conversation summarizer |
+
+Changes take effect on next container restart (`docker compose restart backend`).
 
 ---
 
@@ -195,10 +241,11 @@ The `note_add` tool lets the AI create notes on your behalf, which are immediate
 
 | Endpoint | Method | Description |
 | :--- | :--- | :--- |
-| `/admin/sync-knowledge` | POST | Re-index all markdown files in `knowledge/` |
-| `/admin/memory-list` | GET | List extracted memories (supports `?include_expired=true`) |
-| `/admin/memory/{id}/expire` | POST | Manually expire a specific memory |
-| `/health` | GET | Health check (no auth required) |
+| `/admin/sync-knowledge` | POST | Re-index `knowledge/` |
+| `/admin/memory-list` | GET | List memories (`?include_expired=true`) |
+| `/admin/memory/{id}/expire` | POST | Expire a specific memory |
+| `/admin/feature-request` | POST | Trigger self-improvement triage |
+| `/health` | GET | Health check (no auth) |
 
 All admin endpoints require `Authorization: Bearer $BACKEND_API_KEY`.
 
@@ -207,10 +254,10 @@ All admin endpoints require `Authorization: Bearer $BACKEND_API_KEY`.
 ## Development
 
 ```bash
-# Install dependencies
+# Install deps
 uv pip install -e ".[dev]"
 
-# Run tests (38 unit tests)
+# Tests (64 unit tests)
 uv run pytest
 
 # Lint & format
@@ -222,37 +269,56 @@ uv run mypy apps/
 
 # Rebuild after changes
 docker compose build backend && docker compose up -d backend
+
+# Run evals (needs live DB + API keys)
+docker compose exec backend python -m apps.backend.eval.runner
 ```
 
 ---
 
 ## Environment Variables
 
-| Variable | Required | Description |
+### Required
+
+| Variable | Description |
+| :--- | :--- |
+| `BACKEND_API_KEY` | Shared auth key (LibreChat ↔ backend) |
+| `ANTHROPIC_API_KEY` | Claude Haiku / Opus |
+| `OPENAI_API_KEY` | Embeddings (text-embedding-3-small) |
+| `LANGFUSE_PUBLIC_KEY` | Tracing |
+| `LANGFUSE_SECRET_KEY` | Tracing |
+| `LANGFUSE_HOST` | Langfuse endpoint |
+
+### Optional
+
+| Variable | Default | Description |
 | :--- | :--- | :--- |
-| `BACKEND_API_KEY` | ✅ | Shared auth key between LibreChat and backend |
-| `ANTHROPIC_API_KEY` | ✅ | For Claude Haiku/Opus |
-| `OPENAI_API_KEY` | ✅ | For embeddings (text-embedding-3-small) |
-| `TAVILY_API_KEY` | ✅ | For web search tool |
-| `LANGFUSE_PUBLIC_KEY` | ✅ | Langfuse tracing |
-| `LANGFUSE_SECRET_KEY` | ✅ | Langfuse tracing |
-| `LANGFUSE_HOST` | ✅ | Langfuse endpoint |
-| `DATABASE_URL` | ✅ | PostgreSQL connection string |
-| `DEFAULT_MODEL` | ❌ | Default LLM (default: `anthropic/claude-haiku-4-5`) |
-| `STRONG_MODEL` | ❌ | Complex query LLM (default: `anthropic/claude-opus-4-7`) |
-| `EMBEDDING_MODEL` | ❌ | Embedding model (default: `openai/text-embedding-3-small`) |
-| `EXTRACTOR_MODEL` | ❌ | Memory extraction LLM (default: `anthropic/claude-haiku-4-5`) |
+| `TAVILY_API_KEY` | — | Web search tool |
+| `KASA_USERNAME` | — | Smart lamp (Tapo L510) |
+| `KASA_PASSWORD` | — | Smart lamp |
+| `LAMP_HOST` | — | Lamp IP address |
+| `DEFAULT_MODEL` | `anthropic/claude-haiku-4-5` | Default LLM |
+| `STRONG_MODEL` | `anthropic/claude-opus-4-7` | Complex query LLM |
+| `EMBEDDING_MODEL` | `openai/text-embedding-3-small` | Embedding model |
+| `EVOLUTION_API_URL` | — | WhatsApp (Evolution API URL) |
+| `EVOLUTION_API_KEY` | — | WhatsApp API key |
+| `EVOLUTION_WEBHOOK_TOKEN` | — | Webhook auth token |
+| `REPO_ROOT` | — | Path to repo root (self-improvement) |
+| `GITHUB_REPO` | — | GitHub repo slug (self-improvement) |
 
 ---
 
 ## Roadmap
 
-- [x] **Phase 0** — OpenAI-compatible bridge with LibreChat
-- [x] **Phase 1** — Persistent chat, model router, tools (time, search, notes)
-- [x] **Phase 2** — Semantic memory, knowledge RAG, summarization
-- [x] **Phase 2.1** — Memory temporality, supersession, memory_edit tool
-- [ ] **Phase 3** — Proactive agent (scheduled tasks, notifications)
-- [ ] **Phase 4** — Multi-user support, auth improvements
+- [x] Phase 0 — OpenAI-compatible bridge + LibreChat
+- [x] Phase 1 — Persistent chat, model router, tools
+- [x] Phase 2 — Semantic memory, knowledge RAG, summarization
+- [x] Phase 2.1 — Memory temporality and supersession
+- [x] Phase 3 — Voice satellite (Raspberry Pi)
+- [x] Phase 4 — WhatsApp channel (Evolution API)
+- [x] Phase 5 — Self-improvement loop + eval framework
+- [ ] Phase 5.5 — Proactive notifications (scheduled tasks, reminders)
+- [ ] Phase 6 — Per-contact knowledge (WhatsApp context per person)
 
 ---
 
