@@ -235,14 +235,20 @@ class ChatService:
             ctx.update(ctx_extra)
         working = list(messages)
 
-        for _ in range(MAX_TOOL_LOOPS):
+        for iteration in range(MAX_TOOL_LOOPS):
             req = CompletionRequest(
                 messages=working,
                 model_hint=pick_model(working),
                 tools=openai_tool_specs(channel=channel) or None,
                 metadata={"chat_id": chat_id, "user_id": user_id},
             )
+            t0 = time.monotonic()
             resp = await self.gw.complete(req)
+            llm_ms = int((time.monotonic() - t0) * 1000)
+            print(
+                f"[timing] llm iter={iteration} model={resp.model_used} "
+                f"dt={llm_ms}ms tools={len(resp.tool_calls or [])}"
+            )
 
             if not resp.tool_calls:
                 return _LoopResult(
@@ -264,6 +270,7 @@ class ChatService:
                 fn = tc["function"]
                 args = json.loads(fn.get("arguments", "{}") or "{}")
                 tool = REGISTRY.get(fn["name"])
+                t_tool = time.monotonic()
                 if not tool:
                     result = {"error": f"unknown tool {fn['name']}"}
                 else:
@@ -271,6 +278,8 @@ class ChatService:
                         result = await tool.run(args, ctx)
                     except Exception as e:
                         result = {"error": str(e)}
+                tool_ms = int((time.monotonic() - t_tool) * 1000)
+                print(f"[timing] tool {fn['name']} dt={tool_ms}ms")
                 working.append(
                     {
                         "role": "tool",
@@ -286,7 +295,94 @@ class ChatService:
             trace_id="",
         )
 
+    async def collect_response_streaming(
+        self,
+        messages: list[dict],
+        *,
+        user_id: str,
+        chat_id: str | None,
+        channel: str = "voice",
+        ctx_extra: dict | None = None,
+    ):
+        """Async generator yielding ('prelim', text) | ('final', text) | ('done', None).
+
+        Emits prelim (the filler text the LLM produces before a tool call) as soon as
+        iteration 0 returns. Tool execution happens AFTER prelim is emitted so the
+        caller can TTS-play prelim while the next LLM iteration runs.
+        """
+        ctx: dict = {"user_id": user_id, "chat_id": chat_id}
+        if ctx_extra:
+            ctx.update(ctx_extra)
+        working = list(messages)
+
+        for iteration in range(MAX_TOOL_LOOPS):
+            req = CompletionRequest(
+                messages=working,
+                model_hint=pick_model(working),
+                tools=openai_tool_specs(channel=channel) or None,
+                metadata={"chat_id": chat_id, "user_id": user_id},
+            )
+            t0 = time.monotonic()
+            resp = await self.gw.complete(req)
+            llm_ms = int((time.monotonic() - t0) * 1000)
+            print(
+                f"[timing] llm iter={iteration} model={resp.model_used} "
+                f"dt={llm_ms}ms tools={len(resp.tool_calls or [])}"
+            )
+
+            if not resp.tool_calls:
+                yield ("final", resp.content)
+                yield ("done", None)
+                return
+
+            if resp.content and resp.content.strip():
+                yield ("prelim", resp.content.strip())
+
+            working.append(
+                {
+                    "role": "assistant",
+                    "content": resp.content or None,
+                    "tool_calls": resp.tool_calls,
+                }
+            )
+
+            for tc in resp.tool_calls:
+                fn = tc["function"]
+                args = json.loads(fn.get("arguments", "{}") or "{}")
+                tool = REGISTRY.get(fn["name"])
+                t_tool = time.monotonic()
+                if not tool:
+                    result = {"error": f"unknown tool {fn['name']}"}
+                else:
+                    try:
+                        result = await tool.run(args, ctx)
+                    except Exception as e:
+                        result = {"error": str(e)}
+                tool_ms = int((time.monotonic() - t_tool) * 1000)
+                print(f"[timing] tool {fn['name']} dt={tool_ms}ms")
+                working.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tc["id"],
+                        "content": json.dumps(result, ensure_ascii=False),
+                    }
+                )
+
+        yield ("final", "[stopped: too many tool iterations]")
+        yield ("done", None)
+
     # ---- helpers ----
+
+    def _now_block(self) -> str:
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo("Europe/Madrid")
+        now = datetime.now(tz)
+        return (
+            "## Current time\n"
+            f"{now.strftime('%A %d %B %Y, %H:%M')} ({tz.key}). "
+            "Use this directly for time/date questions — do NOT call `time_now`."
+        )
 
     def _extract_text(self, msg: dict) -> str:
         c = msg.get("content")
@@ -299,6 +395,7 @@ class ChatService:
     def _build_system_prompt(self, memories, chunks, summary, base_system: str = "") -> str:
         default = "You are a personal AI assistant. Be concise, accurate, and helpful."
         parts = [base_system if base_system else default]
+        parts.append(self._now_block())
 
         if memories:
             mem_lines = "\n".join(f"- ({k}) {c}" for k, c, _ in memories)
@@ -326,6 +423,7 @@ class ChatService:
 
     def _build_voice_system_prompt(self, base_system: str, memories, chunks) -> str:
         parts = [base_system] if base_system else []
+        parts.append(self._now_block())
         if memories:
             mem_lines = "\n".join(f"- ({k}) {c}" for k, c, _ in memories)
             parts.append(f"## What I know about the user\n{mem_lines}")

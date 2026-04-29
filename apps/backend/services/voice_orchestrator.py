@@ -1,3 +1,4 @@
+import asyncio
 import json
 from datetime import UTC, datetime, timedelta
 
@@ -9,6 +10,60 @@ from ..domain.chat import ChatMode
 from .chat_service import ChatService
 
 VOICE_CHAT_TIMEOUT = timedelta(seconds=90)
+
+
+async def stream_voice_turn(*, satellite_id: str, transcript: str, chat_service: ChatService):
+    """Yields ('prelim', text) | ('final', text) | ('done', None) for /v1/voice/turn/stream.
+
+    Bypasses the heavy persistent-chat machinery — uses HOME_ASSISTANT mode only for now.
+    """
+    if not transcript.strip():
+        yield ("done", None)
+        return
+
+    async with SessionLocal() as session:
+        repo = Repository(session)
+        user = await repo.get_or_create_user(settings.default_user_handle)
+        await repo.get_or_create_satellite(satellite_id, user.id)
+        await session.commit()
+
+        last_user_text = transcript
+        # NOTE: AsyncSession doesn't support concurrent ops, so sequence here even
+        # though gather would be ~30-50ms faster.
+        memories = await chat_service.memory.retrieve_relevant(
+            session, user.id, last_user_text, k=5
+        )
+        chunks = await chat_service.knowledge.search(session, user.id, last_user_text, k=3)
+
+        base_system = load_prompt("home_assistant")
+        enriched_system = chat_service._build_voice_system_prompt(
+            base_system=base_system, memories=memories, chunks=chunks
+        )
+        context = [
+            {"role": "system", "content": enriched_system},
+            {"role": "user", "content": transcript},
+        ]
+
+        final_text = ""
+        async for ev in chat_service.collect_response_streaming(
+            context,
+            user_id=user.id,
+            chat_id=None,
+            channel="voice",
+            ctx_extra={"satellite_id": satellite_id},
+        ):
+            if ev[0] == "final":
+                final_text = ev[1] or ""
+            yield ev
+
+        # post-turn jobs in background (non-blocking)
+        asyncio.create_task(
+            chat_service._post_turn_jobs_no_chat(
+                user_id=user.id,
+                user_text=last_user_text,
+                assistant_text=final_text,
+            )
+        )
 
 
 class VoiceOrchestrator:
