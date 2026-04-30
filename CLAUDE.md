@@ -95,8 +95,13 @@ apps/backend/
     ├── memory_edit.py / memory_list.py
     ├── chat_search.py
     ├── propose_new_tool.py     # contexts=("web",) only
+    ├── schedule_create.py      # queue one-shot reminders; naive datetimes → Europe/Madrid
     ├── start_voice_chat.py / end_voice_chat.py
     └── lamp.py                 # Tapo L510 via python-kasa
+
+scheduler/
+└── main.py                     # sidecar: polls schedules table every SCHEDULER_INTERVAL_S,
+                                # dispatches by kind (reminder → log event; more kinds TBD)
 
 apps/voice-satellite/
 ├── satellite.py                # Pi client: local OWW wake word → Deepgram STT → /v1/voice/turn/stream → Piper TTS (pw-cat)
@@ -149,14 +154,23 @@ Evolution API → `POST /v1/whatsapp/webhook` → `_process_inbound` (background
 - `parse_json_lenient` handles markdown-fenced or prose-wrapped JSON from the extractor LLM
 - `min_score=0.3` in `search_memories` (lowered from 0.5) — cross-language queries (Spanish user, English memories) land in 0.3–0.5 cosine similarity range
 
+## Audio Events
+
+`POST /v1/audio-event` — satellite posts structured non-speech detector events. Currently: `double_clap` → lamp toggle (no LLM round-trip). Future events add a handler in `api/audio_events.py:_dispatch`.
+
+## Scheduler
+
+`scheduler/main.py` runs as a sidecar process (separate `docker-compose` service or systemd timer). Polls `schedules` table for `status=pending` rows past `run_at`, dispatches by `kind`, marks `done`/`failed`. `SCHEDULER_INTERVAL_S` env var (default 60). `schedule_create` tool lets the LLM queue jobs directly.
+
 ## DB Schema
 
-11 tables across 5 migrations:
+12 tables across 6 migrations:
 - `0001`: users, chats, messages, events
 - `0002`: memories, chat_summaries, knowledge_docs, knowledge_chunks
 - `0003`: valid_from, valid_until, superseded_by, confidence on memories
 - `0004`: satellites (id, user_id, mode, active_chat_id, mode_until, last_seen_at)
 - `0005`: chats.external_id + ix_chats_channel_external_id (WhatsApp chat mapping)
+- `0006`: schedules (id, user_id, kind, payload, run_at, status, last_error, completed_at)
 
 ## Code Style
 

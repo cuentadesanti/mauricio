@@ -13,7 +13,9 @@ A FastAPI backend that acts as the brain for multiple interfaces: [LibreChat](ht
 | **Knowledge (RAG)** | Markdown files in `knowledge/` chunked, embedded, and searched via pgvector. |
 | **Voice** | Local openwakeword → Deepgram STT → NDJSON streaming backend → Piper TTS via PipeWire. Plays prelim audio while tools run. |
 | **WhatsApp** | Responds to your own messages via Evolution API (Baileys). Same memory and tools as web. |
-| **Tools** | Web search, notes, time, memory editing, smart lamp (Tapo), `propose_new_tool`. |
+| **Tools** | Web search, notes, time, memory editing, smart lamp (Tapo), reminders, `propose_new_tool`. |
+| **Scheduler** | `schedule_create` tool lets the assistant queue one-shot reminders. Sidecar process polls every minute and dispatches due jobs. |
+| **Audio events** | Satellite posts non-speech events (double clap → lamp toggle) without LLM round-trip. |
 | **Self-improvement** | Tell the assistant to add a tool → triage LLM → Claude Code in a git worktree → PR opened automatically. |
 | **Evals** | YAML eval cases run on every PR. Periodic cron runner tracks pass rate over time. |
 | **Observability** | Every LLM call traced in Langfuse with nested spans. |
@@ -238,5 +240,5 @@ docker compose exec backend python -m apps.backend.eval.cron
 - [x] Phase 3 — Voice satellite (Raspberry Pi, Deepgram, NDJSON streaming, prompt caching)
 - [x] Phase 4 — WhatsApp (Evolution API)
 - [x] Phase 5 — Self-improvement loop, eval framework, prompt externalization
-- [ ] Phase 5.5 — Proactive notifications and scheduled reminders
+- [x] Phase 5.5 — Scheduler sidecar + schedule_create tool + audio events (double clap)
 - [ ] Phase 6 — Per-contact knowledge (WhatsApp)
