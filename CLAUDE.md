@@ -1,19 +1,17 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code when working with this repository.
 
 ## Overview
 
-Personal AI backend — a FastAPI service that exposes an OpenAI-compatible API. LibreChat (chat UI) and voice satellites connect to this backend, which routes requests through LiteLLM to the actual LLM providers (Anthropic, OpenAI, etc.) and traces every call with Langfuse.
+Personal AI backend — FastAPI service exposing an OpenAI-compatible API. LibreChat (web UI), a Raspberry Pi voice satellite, and WhatsApp all connect to this backend, which routes requests through LiteLLM to Anthropic/OpenAI and traces every call with Langfuse.
 
-Full stack via Docker Compose: LibreChat → Backend → LiteLLM → LLM providers, alongside PostgreSQL/pgvector, MongoDB (for LibreChat), Meilisearch, and Mosquitto (MQTT).
+Full stack via Docker Compose: LibreChat → Backend → LiteLLM → LLM providers, alongside PostgreSQL/pgvector, MongoDB, Meilisearch, and Mosquitto (MQTT).
 
 ## Development Commands
 
-All Python commands use `uv`:
-
 ```bash
-# Run backend locally (dev, with hot reload)
+# Run backend locally (dev, hot reload)
 uv run uvicorn apps.backend.main:app --reload
 
 # Lint / format
@@ -25,7 +23,7 @@ uv run mypy apps/
 
 # Tests
 uv run pytest
-uv run pytest path/to/test_file.py::test_name   # single test
+uv run pytest path/to/test_file.py::test_name
 
 # Full stack (Docker)
 docker compose up -d
@@ -33,126 +31,138 @@ docker compose logs -f backend
 
 # Rebuild after dependency changes
 docker compose build backend && docker compose up -d backend
+
+# Run evals (needs live DB + API keys)
+docker compose exec backend python -m apps.backend.eval.runner
 ```
 
 ## Environment Setup
 
-Two `.env` files are required (see `.env.example` and `.env.librechat.example`):
+Two `.env` files required (see `.env.example` and `.env.librechat.example`):
 
-- `.env` — backend secrets: `BACKEND_API_KEY`, `LANGFUSE_*`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `TAVILY_API_KEY`, `KASA_USERNAME`, `KASA_PASSWORD`, `DEFAULT_MODEL`
-- `.env.librechat` — LibreChat secrets: `CREDS_KEY`, `CREDS_IV`, `JWT_SECRET`, `JWT_REFRESH_SECRET`, `BACKEND_API_KEY`
+- `.env` — backend: `BACKEND_API_KEY`, `LANGFUSE_*`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `TAVILY_API_KEY`, `KASA_*`, `LAMP_HOST`, `EVOLUTION_*`, `REPO_ROOT`, `GITHUB_REPO`
+- `.env.librechat` — LibreChat: `CREDS_KEY`, `CREDS_IV`, `JWT_SECRET`, `JWT_REFRESH_SECRET`, `BACKEND_API_KEY`
 
-Both files must share the same `BACKEND_API_KEY` value.
+Both files must share the same `BACKEND_API_KEY`.
 
 ## Architecture
 
 ```
 apps/backend/
-├── main.py                     # FastAPI app, mounts routers
+├── main.py
 ├── api/
 │   ├── chat.py                 # /v1/chat/completions, /v1/responses, /v1/models
-│   ├── voice.py                # /v1/voice/turn, /v1/voice/satellite/{id}/state
-│   ├── admin.py                # /admin/sync-knowledge, /admin/memory-list, /admin/memory/{id}/expire
-│   └── health.py               # /health
+│   ├── voice.py                # /v1/voice/turn, /v1/voice/turn/stream (NDJSON), /v1/voice/satellite/{id}/state
+│   ├── whatsapp.py             # /v1/whatsapp/webhook (Evolution API)
+│   ├── admin.py                # /admin/sync-knowledge, /admin/memory-list, /admin/feature-request
+│   └── health.py
+├── adapters/
+│   └── whatsapp_evolution.py   # parse_evolution_webhook + send_whatsapp_text
 ├── core/
-│   └── config.py               # Pydantic Settings (reads .env)
+│   ├── config.py               # Pydantic Settings
+│   ├── prompts.py              # load_prompt(name) — reads prompts/*.md, lru_cache
+│   └── json_utils.py           # parse_json_lenient — handles markdown-fenced LLM JSON
 ├── domain/
 │   ├── chat.py                 # ChatMode enum (PERSISTENT, MEMORYLESS, HOME_ASSISTANT)
-│   ├── knowledge.py            # Knowledge domain models
-│   ├── memory.py               # Memory domain models
-│   └── model_gateway.py        # Protocol + CompletionRequest/Response
+│   └── model_gateway.py        # CompletionRequest/Response
 ├── db/
-│   ├── models.py               # SQLAlchemy ORM models (incl. Satellite)
-│   ├── repository.py           # All DB access
-│   └── session.py              # AsyncSession factory + SessionLocal
+│   ├── models.py               # SQLAlchemy ORM (11 tables)
+│   ├── repository.py           # All DB access; memory min_score=0.3 for cross-language queries
+│   └── session.py              # AsyncSession factory
+├── eval/
+│   ├── runner.py               # YAML eval runner — runs cases against live ChatService
+│   ├── cron.py                 # Periodic runner: logs pass rate to events table, alerts on drop
+│   └── cases/                  # memory_recall.yaml, tool_selection.yaml
 ├── gateways/
-│   ├── litellm_gateway.py      # LLM calls via LiteLLM + Langfuse tracing
-│   ├── embeddings_gateway.py   # OpenAI text-embedding-3-small via LiteLLM
-│   └── s3_storage.py           # Optional S3 sync for knowledge files
+│   ├── litellm_gateway.py      # LLM calls via LiteLLM + Langfuse
+│   └── embeddings_gateway.py   # OpenAI text-embedding-3-small
 ├── services/
-│   ├── chat_service.py         # Main orchestrator: retrieval, tool loop, post-turn jobs
-│   ├── voice_orchestrator.py   # Voice turn routing: home_assistant vs voice_chat mode
-│   ├── knowledge_service.py    # Chunk + index markdown files; semantic search
-│   ├── memory_service.py       # store_unique (dedup by cosine), retrieve_relevant
-│   ├── memory_extractor.py     # Background LLM pass: extract facts/prefs/entities, supersession
-│   ├── summarizer.py           # Compress long chats into rolling summary (>20 msgs)
-│   └── router.py               # pick_model: haiku default, opus for complex queries
+│   ├── chat_service.py         # Main orchestrator; also: collect_response_streaming, build_voice_system_blocks
+│   ├── voice_orchestrator.py   # stream_voice_turn + VoiceOrchestrator (home_assistant / voice_chat)
+│   ├── feature_request_service.py  # LLM triage (viable/clarify/not_viable)
+│   ├── improvement_orchestrator.py # git worktree → claude --print → pytest → gh pr create
+│   ├── knowledge_service.py
+│   ├── memory_service.py
+│   ├── memory_extractor.py     # Uses parse_json_lenient for robust LLM JSON parsing
+│   ├── summarizer.py
+│   └── router.py
 └── tools/
-    ├── registry.py             # REGISTRY dict + openai_tool_specs()
-    ├── base.py                 # ToolSpec (Pydantic) + Tool protocol
-    ├── time_now.py             # Current time in any IANA timezone
-    ├── web_search.py           # Tavily search
-    ├── note_add.py             # Save/update markdown note in knowledge/ (deduplicates by title)
-    ├── note_list.py            # List notes with snippets
-    ├── note_read.py            # Read full note content
-    ├── memory_edit.py          # expire / correct / add memories explicitly
-    ├── start_voice_chat.py     # Switch satellite to voice_chat mode + create persistent chat
-    ├── end_voice_chat.py       # Return satellite to home_assistant mode
-    └── lamp.py                 # Tapo L510 smart lamp (on/off/toggle/status)
+    ├── registry.py             # REGISTRY dict; propose_new_tool gated on repo_root+github_repo
+    ├── base.py
+    ├── time_now.py
+    ├── web_search.py
+    ├── note_add.py / note_list.py / note_read.py
+    ├── memory_edit.py / memory_list.py
+    ├── chat_search.py
+    ├── propose_new_tool.py     # contexts=("web",) only
+    ├── start_voice_chat.py / end_voice_chat.py
+    └── lamp.py                 # Tapo L510 via python-kasa
 
 apps/voice-satellite/
-└── satellite.py                # Raspberry Pi client: wake word → STT → backend → TTS
+├── satellite.py                # Pi client: local OWW wake word → Deepgram STT → /v1/voice/turn/stream → Piper TTS (pw-cat)
+└── satellite.service           # systemd unit template
+
+prompts/                        # Editable system prompts (load_prompt reads these)
+├── home_assistant.md
+├── voice_chat.md
+├── whatsapp.md
+├── memory_extraction.md
+└── summarization.md
+
+scripts/
+└── deploy-satellite.sh         # One-command Mac→Pi deploy over SSH
 ```
 
 ## Request Flow
 
 ### Chat (LibreChat)
-LibreChat sends OpenAI-format requests to `/v1/chat/completions` (or `/v1/responses` for Agents). `ChatService.handle()` orchestrates:
-
-1. **Retrieve context** (parallel): relevant memories + knowledge chunks + chat summary
-2. **Build system prompt** with current facts, knowledge excerpts, and summary
-3. **LLM tool loop** (up to 5 iterations): model can call any registered tool
-4. **Stream response** to LibreChat via fake-SSE
-5. **Post-turn jobs** (async, fire-and-forget): `MemoryExtractor` + `Summarizer`
+`ChatService.handle()` — PERSISTENT mode:
+1. Parallel: memories + knowledge chunks + summary
+2. Build enriched system prompt (base_system + memory/knowledge blocks)
+3. Tool loop (up to 5 iterations)
+4. SSE stream to LibreChat
+5. Background: MemoryExtractor + Summarizer
 
 ### Voice (Satellite)
-Raspberry Pi runs `satellite.py`: detects wake word → records audio with VAD → transcribes via Whisper (wyoming) → `POST /v1/voice/turn` → backend responds with text → Piper TTS plays audio.
+Pi runs `satellite.py`: local openwakeword → VAD recording → Deepgram STT (fallback: wyoming-whisper) → `POST /v1/voice/turn/stream` → Piper TTS via `pw-cat` (streaming, first audio before full response).
 
-`VoiceOrchestrator` routes each turn based on satellite mode:
-- **`home_assistant`** (default): one-off commands with memory/knowledge, uses `ChatMode.HOME_ASSISTANT`. Tools available including lamp, web_search, etc. Can call `start_voice_chat` to enter conversation mode.
-- **`voice_chat`**: persistent chat with 90-second inactivity timeout. Uses `ChatMode.PERSISTENT`. Call `end_voice_chat` to return to home_assistant.
+`/v1/voice/turn/stream` returns NDJSON `{type, text}` events: `prelim` (filler while tool runs) → `final` → `done`.
 
-Satellite state (mode, active_chat_id, mode_until) is stored in the `satellites` table.
+`stream_voice_turn` uses `collect_response_streaming` which yields `(kind, text)` tuples — prelim is emitted before tool calls execute, so TTS can start immediately.
 
-## Model Routing
+Voice system prompt uses Anthropic prompt caching: `build_voice_system_blocks` splits into a cacheable base block + uncached dynamic block (time + memories + knowledge).
 
-Two LibreChat models map to two modes:
-- `personal-ai` → `ChatMode.PERSISTENT` (full retrieval + memory)
-- `personal-ai-quick` → `ChatMode.MEMORYLESS` (no DB, no memory)
+`VoiceOrchestrator` modes:
+- **home_assistant** (default): one-off commands, `ChatMode.HOME_ASSISTANT`
+- **voice_chat**: persistent chat, 90s timeout, `ChatMode.PERSISTENT`
 
-`router.pick_model` selects `STRONG_MODEL` (Opus) for complex queries (keywords, length > 800 chars, context > 8000 chars), otherwise `DEFAULT_MODEL` (Haiku). `EXTRACTOR_MODEL` (Haiku) is used for background memory extraction.
+### WhatsApp
+Evolution API → `POST /v1/whatsapp/webhook` → `_process_inbound` (background task) → `ChatService` PERSISTENT with `external_id=chat_jid` → one eternal chat per contact JID → `send_whatsapp_text`. Only `is_from_me=True` messages processed (Opción C). Optional `WHATSAPP_ONLY_JID` filter.
+
+### Self-improvement
+`propose_new_tool` (web-only) → `FeatureRequestService._triage` → if viable: `ImprovementOrchestrator` creates git worktree, runs `claude --print --dangerously-skip-permissions`, runs `uv run pytest`, commits, pushes, `gh pr create`. Title sanitized via regex before use in branch/path names.
 
 ## Memory System
 
-Memories live in the `memories` table with temporality fields:
-- `valid_until IS NULL` → currently active; filtered in all retrieval queries
-- `superseded_by` → links expired memory to its replacement
-- `confidence`, `valid_from` → for richer temporal reasoning
-
-`MemoryExtractor` receives active memory list (with IDs) and the latest exchange, outputs JSON with `{facts, preferences, entities, expire}`. Each item is `{content, valid_from, supersedes: [ids]}`. The extractor chains supersession automatically (e.g. "moved to Lisbon" expires the Madrid memory).
-
-The `memory_edit` tool allows explicit user-driven corrections without waiting for background extraction. LibreChat's native "Use Memory" toggle is a separate MongoDB-backed system and is not connected to this backend's memory.
-
-## Knowledge Base
-
-Markdown files in `knowledge/` are chunked (~1500 chars, 200 overlap), embedded, and stored in `knowledge_chunks`. Auto-synced at boot; manual re-sync via `POST /admin/sync-knowledge`. Semantic search uses pgvector cosine distance.
-
-## Smart Home
-
-`lamp` tool controls a Tapo L510 at `192.168.1.26` via `python-kasa`. Requires `KASA_USERNAME` and `KASA_PASSWORD`. Uses `Discover.discover_single` (auto-detects KLAP/port-80 protocol) with 3-attempt retry + `disconnect()` in `finally`.
+- `valid_until IS NULL` → active
+- `superseded_by` → links to replacement
+- `parse_json_lenient` handles markdown-fenced or prose-wrapped JSON from the extractor LLM
+- `min_score=0.3` in `search_memories` (lowered from 0.5) — cross-language queries (Spanish user, English memories) land in 0.3–0.5 cosine similarity range
 
 ## DB Schema
 
-10 tables across 4 migrations:
+11 tables across 5 migrations:
 - `0001`: users, chats, messages, events
 - `0002`: memories, chat_summaries, knowledge_docs, knowledge_chunks
-- `0003`: adds valid_from, valid_until, superseded_by, confidence to memories + `ix_memories_active` partial index
+- `0003`: valid_from, valid_until, superseded_by, confidence on memories
 - `0004`: satellites (id, user_id, mode, active_chat_id, mode_until, last_seen_at)
+- `0005`: chats.external_id + ix_chats_channel_external_id (WhatsApp chat mapping)
 
 ## Code Style
 
-- `ruff` enforces rules `E, F, I, UP, B` with line-length 100, target Python 3.12.
-- Prompt string files (voice_orchestrator, memory_extractor, summarizer) have `E501` suppressed via `per-file-ignores`.
-- `mypy` for static typing; `pydantic-settings` for config.
-- `pytest-asyncio` in `auto` mode — async test functions work without decorators.
-- 48 unit tests covering tools, chat service, memory extractor, knowledge utils, router, and voice.
+- `ruff` rules `E, F, I, UP, B`, line-length 100, target Python 3.12
+- `per-file-ignores` E501 on: feature_request_service, improvement_orchestrator, config, propose_new_tool, test_memory_extractor
+- `mypy` for static typing; `pydantic-settings` for config
+- `pytest-asyncio` in `auto` mode
+- `tests/conftest.py` sets minimum env vars so `Settings()` doesn't fail in test environments with empty `.env`
+- 64 tests (unit + integration)
