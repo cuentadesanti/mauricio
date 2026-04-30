@@ -131,9 +131,9 @@ TTS_HOST=$SERVER_IP
 STT_PORT=10300
 TTS_PORT=10200
 WAKE_PORT=10400
-# USB mic device — run 'arecord -l' on the Pi to find the card number
-# Format: hw:<card>,<device>  e.g. hw:2,0
-AUDIO_DEVICE=plughw:2,0
+# USB mic device index — leave unset to use ALSA default (configured in /etc/asound.conf)
+# Override with a number if you have multiple mics: AUDIO_DEVICE=1
+# AUDIO_DEVICE=
 EOF
 echo "    .env written."
 ENDSSH

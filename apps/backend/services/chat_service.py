@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -280,13 +281,7 @@ class ChatService:
                 args = json.loads(fn.get("arguments", "{}") or "{}")
                 tool = REGISTRY.get(name)
                 t_tool = time.monotonic()
-                if not tool:
-                    result = {"error": f"unknown tool {name}"}
-                else:
-                    try:
-                        result = await tool.run(args, ctx)
-                    except Exception as e:
-                        result = {"error": str(e)}
+                result = await _execute_tool(tool, name, args, ctx)
                 tool_ms = int((time.monotonic() - t_tool) * 1000)
                 print(f"[timing] tool {name} dt={tool_ms}ms")
                 working.append(
@@ -361,13 +356,7 @@ class ChatService:
                 args = json.loads(fn.get("arguments", "{}") or "{}")
                 tool = REGISTRY.get(fn["name"])
                 t_tool = time.monotonic()
-                if not tool:
-                    result = {"error": f"unknown tool {fn['name']}"}
-                else:
-                    try:
-                        result = await tool.run(args, ctx)
-                    except Exception as e:
-                        result = {"error": str(e)}
+                result = await _execute_tool(tool, fn["name"], args, ctx)
                 tool_ms = int((time.monotonic() - t_tool) * 1000)
                 print(f"[timing] tool {fn['name']} dt={tool_ms}ms")
                 working.append(
@@ -540,6 +529,44 @@ class ChatService:
             except Exception:
                 pass
             print(f"[post_turn_jobs_no_chat] {e}")
+
+
+async def _execute_tool(tool, name: str, args: dict, ctx: dict) -> dict:
+    """Single chokepoint for every tool invocation in the agentic loop.
+
+    Three gates run before the tool's own `run`:
+      1. Unknown name → structured error so the LLM can recover.
+      2. MAURICIO_DRY_RUN=1 → log the call and return a mock; lets us run
+         the eval suite (or smoke-test new tools) without touching outbound
+         APIs / smart-home gear / writing notes to disk.
+      3. requires_confirmation → short-circuit with a "pending" payload so
+         the LLM tells the user to approve before we actually fire. Real
+         WhatsApp 👍/👎 approval flow lands when whatsapp_send/file_delete
+         do; until then this is preventive scaffolding.
+    """
+    if tool is None:
+        return {"error": f"unknown tool {name}"}
+
+    if os.getenv("MAURICIO_DRY_RUN", "0") == "1":
+        print(f"[dry_run] would call {name} with args={args}")
+        return {"dry_run": True, "tool": name, "args": args}
+
+    if getattr(tool, "requires_confirmation", False):
+        print(f"[confirmation] tool {name} requires confirmation — not executed")
+        return {
+            "pending_confirmation": True,
+            "tool": name,
+            "args": args,
+            "instruction": (
+                "This action requires explicit user confirmation. "
+                "Tell the user what you intend to do and ask them to reply 'sí' to proceed."
+            ),
+        }
+
+    try:
+        return await tool.run(args, ctx)
+    except Exception as e:
+        return {"error": str(e)}
 
 
 async def _fake_stream(

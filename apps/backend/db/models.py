@@ -157,6 +157,28 @@ class KnowledgeChunk(Base):
     embedding: Mapped[list[float] | None] = mapped_column(Vector(1536), nullable=True)
 
 
+class Schedule(Base):
+    """Cron-like store for one-shot (and eventually recurring) jobs.
+
+    `kind` is the dispatcher key the scheduler sidecar switches on
+    (e.g. 'reminder', 'whatsapp_send', 'note_remind'). `payload` carries
+    everything the dispatcher needs. `status` flows pending → done|failed.
+    """
+
+    __tablename__ = "schedules"
+    id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid4())
+    )
+    user_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("users.id"))
+    kind: Mapped[str] = mapped_column(String)
+    payload: Mapped[dict] = mapped_column(JSONB, default=dict)
+    run_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(String, default="pending")
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class Satellite(Base):
     __tablename__ = "satellites"
     id: Mapped[str] = mapped_column(String, primary_key=True)

@@ -14,6 +14,7 @@ from .models import (
     MemoryRow,
     Message,
     Satellite,
+    Schedule,
     User,
 )
 
@@ -378,6 +379,47 @@ class Repository:
         self.s.add(sat)
         await self.s.flush()
         return sat
+
+    # ---- schedules ----
+    async def insert_schedule(
+        self,
+        *,
+        user_id: str,
+        kind: str,
+        run_at: datetime,
+        payload: dict,
+    ) -> Schedule:
+        sched = Schedule(user_id=user_id, kind=kind, run_at=run_at, payload=payload)
+        self.s.add(sched)
+        await self.s.flush()
+        return sched
+
+    async def list_due_schedules(self, *, now: datetime, limit: int = 50) -> list[Schedule]:
+        """Pending rows whose run_at has passed. Scheduler dispatcher input."""
+        q = (
+            select(Schedule)
+            .where(Schedule.status == "pending", Schedule.run_at <= now)
+            .order_by(Schedule.run_at)
+            .limit(limit)
+        )
+        return list((await self.s.execute(q)).scalars().all())
+
+    async def mark_schedule_done(self, schedule_id: str, *, when: datetime | None = None) -> None:
+        ts = when or datetime.now(UTC)
+        await self.s.execute(
+            update(Schedule)
+            .where(Schedule.id == schedule_id)
+            .values(status="done", completed_at=ts, last_error=None)
+        )
+        await self.s.flush()
+
+    async def mark_schedule_failed(self, schedule_id: str, error: str) -> None:
+        await self.s.execute(
+            update(Schedule)
+            .where(Schedule.id == schedule_id)
+            .values(status="failed", last_error=error[:2000])
+        )
+        await self.s.flush()
 
     async def update_satellite_mode(
         self,

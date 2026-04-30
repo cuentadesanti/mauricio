@@ -9,6 +9,7 @@ from .note_add import NoteAddTool
 from .note_list import NoteListTool
 from .note_read import NoteReadTool
 from .propose_new_tool import ProposeNewToolTool
+from .schedule_create import ScheduleCreateTool
 from .start_voice_chat import StartVoiceChatTool
 from .time_now import TimeNowTool
 from .web_search import WebSearchTool
@@ -25,6 +26,7 @@ def build_registry() -> dict[str, Tool]:
         "chat_search": ChatSearchTool(),
         "start_voice_chat": StartVoiceChatTool(),
         "end_voice_chat": EndVoiceChatTool(),
+        "schedule_create": ScheduleCreateTool(),
     }
     if settings.tavily_api_key:
         tools["web_search"] = WebSearchTool()
@@ -41,7 +43,7 @@ def build_registry() -> dict[str, Tool]:
 REGISTRY = build_registry()
 
 
-def _tool_matches_channel(tool, channel: str) -> bool:
+def _tool_matches_channel(tool: Tool, channel: str) -> bool:
     contexts = getattr(tool, "contexts", ("any",))
     return "any" in contexts or channel in contexts
 
