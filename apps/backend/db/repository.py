@@ -187,9 +187,13 @@ class Repository:
         embedding: list[float],
         k: int = 5,
         kinds: list[str] | None = None,
-        min_score: float = 0.5,
+        min_score: float = 0.3,
         active_only: bool = True,
     ) -> list[tuple[MemoryRow, float]]:
+        # min_score=0.3 (was 0.5): with cross-language queries (user asks in
+        # Spanish, memory stored in English by extractor) cosine similarity
+        # often lands in 0.3-0.5. Higher recall is safer than missing facts —
+        # the LLM filters noise downstream.
         cos_dist = MemoryRow.embedding.cosine_distance(embedding).label("dist")
         q = (
             select(MemoryRow, cos_dist)

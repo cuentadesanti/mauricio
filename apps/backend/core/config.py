@@ -47,6 +47,11 @@ class Settings(BaseSettings):
     evolution_api_key: str | None = None
     evolution_instance: str = "mauricio"
     evolution_webhook_token: str | None = None  # optional webhook auth
+    # Lock WhatsApp to a single chat JID (typically a one-person group, like
+    # "Mauricio"). When set, all other JIDs are dropped at the webhook layer.
+    # Crucial when the is_group block is removed below — without this, the
+    # bot replies to anything you write in any group.
+    whatsapp_only_jid: str | None = None
 
     # Phase 5 — Self-improvement loop
     repo_root: str | None = None      # absolute path to repo root, e.g. /app or /home/santi/mauricio

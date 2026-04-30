@@ -25,13 +25,15 @@ def build_registry() -> dict[str, Tool]:
         "chat_search": ChatSearchTool(),
         "start_voice_chat": StartVoiceChatTool(),
         "end_voice_chat": EndVoiceChatTool(),
-        "propose_new_tool": ProposeNewToolTool(),
     }
     if settings.tavily_api_key:
         tools["web_search"] = WebSearchTool()
     if settings.kasa_username and settings.kasa_password and settings.lamp_host:
         tools["lamp"] = LampTool()
     if settings.repo_root and settings.github_repo:
+        # propose_new_tool requires both a checked-out repo to write to and a
+        # GitHub remote to push branches/PRs to. Without these the tool would
+        # error confusingly when the LLM calls it, so register it conditionally.
         tools["propose_new_tool"] = ProposeNewToolTool()
     return tools
 

@@ -32,12 +32,27 @@ class CaseResult:
     tool_calls: list = field(default_factory=list)
 
 
+EVAL_USER_HANDLE = "eval-user"
+
+
 async def reset_state() -> None:
-    """Limpia BD entre casos para no contaminar memoria ni chats."""
+    """Wipe only the eval user's chats/messages/memories. Crucial: this MUST
+    NOT delete the real user's data — eval-cron runs against the same DB."""
     async with SessionLocal() as s:
-        await s.execute(delete(MemoryRow))
-        await s.execute(delete(Message))
-        await s.execute(delete(Chat))
+        from ..db.models import User
+        from sqlalchemy import select
+        u = (await s.execute(select(User).where(User.handle == EVAL_USER_HANDLE))).scalar_one_or_none()
+        if u is None:
+            return  # no eval data exists yet, nothing to clean
+        # Order matters: memories reference messages via source_message_id,
+        # so delete memories first, then messages, then chats.
+        await s.execute(delete(MemoryRow).where(MemoryRow.user_id == u.id))
+        eval_chat_ids = (
+            await s.execute(select(Chat.id).where(Chat.user_id == u.id))
+        ).scalars().all()
+        if eval_chat_ids:
+            await s.execute(delete(Message).where(Message.chat_id.in_(eval_chat_ids)))
+            await s.execute(delete(Chat).where(Chat.id.in_(eval_chat_ids)))
         await s.commit()
 
 
@@ -60,7 +75,7 @@ async def run_messages(
     async with SessionLocal() as session:
         async for sse in chat_svc.handle(
             session,
-            user_handle="eval-user",
+            user_handle=EVAL_USER_HANDLE,
             channel="eval",
             mode=ChatMode.PERSISTENT,
             incoming_messages=full_messages,

@@ -33,6 +33,10 @@ class _LoopResult:
     model: str = ""
     usage: dict = field(default_factory=dict)
     trace_id: str = ""
+    # Names of tools called during this loop (in order, deduped). Plumbed
+    # through handle() as an x_meta SSE event before [DONE] so channels like
+    # WhatsApp can render a footer.
+    tools_used: list[str] = field(default_factory=list)
 
 
 class ChatService:
@@ -66,7 +70,7 @@ class ChatService:
                 incoming_messages, user_id=user.id, chat_id=None,
                 channel=channel, ctx_extra=ctx_extra
             )
-            async for sse in _fake_stream(result.text, result.model):
+            async for sse in _fake_stream(result.text, result.model, tools_used=result.tools_used):
                 yield sse
             await session.commit()
             return
@@ -97,7 +101,7 @@ class ChatService:
                 context, user_id=user.id, chat_id=None,
                 channel=channel, ctx_extra=ctx_extra
             )
-            async for sse in _fake_stream(result.text, result.model):
+            async for sse in _fake_stream(result.text, result.model, tools_used=result.tools_used):
                 yield sse
             asyncio.create_task(
                 self._post_turn_jobs_no_chat(
@@ -187,7 +191,7 @@ class ChatService:
             context, user_id=user.id, chat_id=chat.id,
             channel=channel, ctx_extra=ctx_extra
         )
-        async for sse in _fake_stream(result.text, result.model):
+        async for sse in _fake_stream(result.text, result.model, tools_used=result.tools_used):
             yield sse
 
         # only update signature for web channel (external_id and force_chat_id don't use it)
@@ -234,6 +238,7 @@ class ChatService:
         if ctx_extra:
             ctx.update(ctx_extra)
         working = list(messages)
+        tools_used: list[str] = []  # ordered, deduped tool names across iterations
 
         for iteration in range(MAX_TOOL_LOOPS):
             req = CompletionRequest(
@@ -256,6 +261,7 @@ class ChatService:
                     model=resp.model_used,
                     usage=resp.usage,
                     trace_id=resp.trace_id,
+                    tools_used=tools_used,
                 )
 
             working.append(
@@ -268,18 +274,21 @@ class ChatService:
 
             for tc in resp.tool_calls:
                 fn = tc["function"]
+                name = fn["name"]
+                if name not in tools_used:
+                    tools_used.append(name)
                 args = json.loads(fn.get("arguments", "{}") or "{}")
-                tool = REGISTRY.get(fn["name"])
+                tool = REGISTRY.get(name)
                 t_tool = time.monotonic()
                 if not tool:
-                    result = {"error": f"unknown tool {fn['name']}"}
+                    result = {"error": f"unknown tool {name}"}
                 else:
                     try:
                         result = await tool.run(args, ctx)
                     except Exception as e:
                         result = {"error": str(e)}
                 tool_ms = int((time.monotonic() - t_tool) * 1000)
-                print(f"[timing] tool {fn['name']} dt={tool_ms}ms")
+                print(f"[timing] tool {name} dt={tool_ms}ms")
                 working.append(
                     {
                         "role": "tool",
@@ -293,6 +302,7 @@ class ChatService:
             model="n/a",
             usage={},
             trace_id="",
+            tools_used=tools_used,
         )
 
     async def collect_response_streaming(
@@ -532,7 +542,12 @@ class ChatService:
             print(f"[post_turn_jobs_no_chat] {e}")
 
 
-async def _fake_stream(text: str, model: str, words_per_chunk: int = 4):
+async def _fake_stream(
+    text: str,
+    model: str,
+    words_per_chunk: int = 4,
+    tools_used: list[str] | None = None,
+):
     """TD-8: Word-based SSE chunks so words aren't split mid-stream."""
     completion_id = f"chatcmpl-{uuid.uuid4().hex}"
     created = int(time.time())
@@ -564,4 +579,9 @@ async def _fake_stream(text: str, model: str, words_per_chunk: int = 4):
         "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
     }
     yield f"data: {json.dumps(final)}\n\n"
+    # x_meta event: non-OpenAI extension carrying our backend metadata
+    # (currently: list of tool names called). Channels that care (WhatsApp
+    # adapter) parse this for footers; OpenAI clients ignore unknown keys.
+    if tools_used:
+        yield f"data: {json.dumps({'x_meta': {'tools_used': tools_used}})}\n\n"
     yield "data: [DONE]\n\n"

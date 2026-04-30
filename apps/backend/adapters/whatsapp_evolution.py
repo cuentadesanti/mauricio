@@ -91,3 +91,34 @@ async def send_whatsapp_text(chat_jid: str, text: str) -> dict[str, Any]:
         )
         r.raise_for_status()
         return r.json()
+
+
+async def send_whatsapp_presence(
+    chat_jid: str, presence: str = "composing", delay_ms: int = 10_000
+) -> None:
+    """Sets typing/recording presence in a chat. WhatsApp shows the indicator
+    for ~delay_ms then auto-clears, so call this every ~8s while a long tool
+    loop runs to keep the typing animation alive."""
+    if not settings.evolution_api_url or not settings.evolution_api_key:
+        return
+    url = (
+        f"{settings.evolution_api_url.rstrip('/')}"
+        f"/chat/sendPresence/{settings.evolution_instance}"
+    )
+    payload = {
+        "number": chat_jid.replace("@s.whatsapp.net", "").replace("@g.us", ""),
+        "presence": presence,  # composing | recording | available | unavailable
+        "delay": delay_ms,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            await client.post(
+                url,
+                headers={
+                    "apikey": settings.evolution_api_key,
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+    except Exception as e:  # noqa: BLE001
+        logger.debug("presence send failed (non-fatal): %s", e)

@@ -1,10 +1,10 @@
-import json
 import logging
 from typing import Literal
 
 from pydantic import BaseModel
 
 from ..core.config import settings
+from ..core.json_utils import parse_json_lenient
 from ..db.repository import Repository
 from ..db.session import SessionLocal
 from ..domain.model_gateway import CompletionRequest
@@ -134,7 +134,11 @@ class FeatureRequestService:
             metadata={"job": "feature_request_triage"},
         )
         resp = await self.gw.complete(req)
-        data = json.loads(resp.content.strip())
+        data = parse_json_lenient(resp.content)
+        if data is None:
+            raise ValueError(
+                f"feature_request triage returned non-JSON: {(resp.content or '')[:200]}"
+            )
         return TriageResult(**data)
 
     async def _log_triage(self, request_id: str, triage: TriageResult) -> None:

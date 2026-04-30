@@ -1,9 +1,9 @@
-import json
 from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.config import settings
+from ..core.json_utils import parse_json_lenient
 from ..core.prompts import load_prompt
 from ..db.repository import Repository
 from ..domain.model_gateway import CompletionRequest
@@ -50,10 +50,15 @@ class MemoryExtractor:
             response_format={"type": "json_object"},
         )
         resp = await self.gw.complete(req)
-        try:
-            extracted = json.loads(resp.content.strip())
-        except json.JSONDecodeError:
-            return {"stored": 0, "skipped": 0, "expired": 0, "error": "bad_json"}
+        extracted = parse_json_lenient(resp.content)
+        if extracted is None:
+            return {
+                "stored": 0,
+                "skipped": 0,
+                "expired": 0,
+                "error": "bad_json",
+                "raw_head": (resp.content or "")[:200],
+            }
 
         stats = {"stored": 0, "skipped": 0, "expired": 0}
 

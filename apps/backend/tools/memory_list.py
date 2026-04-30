@@ -36,7 +36,11 @@ class MemoryListTool:
             memories = await repo.list_active_memories(user_id, kinds=kinds)
 
         items = [
-            {"kind": m.kind, "content": m.content, "since": m.valid_from.isoformat()}
+            {
+                "kind": m.kind,
+                "content": m.content,
+                "since": m.valid_from.isoformat() if m.valid_from else None,
+            }
             for m in memories[:50]  # cap to avoid huge payloads
         ]
         return {"count": len(items), "memories": items}
